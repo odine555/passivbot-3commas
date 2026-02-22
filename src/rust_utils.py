@@ -303,6 +303,12 @@ def sync_installed_extension_into_src() -> None:
                 # Avoid rewriting an identical dylib. Rewriting in-place can race with imports
                 # from concurrent processes on macOS and trigger "Code Signature Invalid" kills.
                 if _sha256(installed_path) == _sha256(dst):
+                    # Content is identical; update mtime so staleness checks pass.
+                    try:
+                        inst_mtime = installed_path.stat().st_mtime
+                        os.utime(dst, (inst_mtime, inst_mtime))
+                    except OSError:
+                        pass
                     return
         dst.parent.mkdir(parents=True, exist_ok=True)
         tmp = dst.with_name(f".{dst.name}.tmp.{os.getpid()}")
