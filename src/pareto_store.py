@@ -72,7 +72,23 @@ def _resolve_limit_value(
     return stats_flat.get(key)
 
 
-def _suite_metrics_to_stats(entry: Dict[str, Any]) -> Tuple[Dict[str, float], Dict[str, float]]:
+def _resolve_aggregate_mode(
+    metric: str, aggregate_cfg: Optional[Dict[str, str]]
+) -> str:
+    """Return the aggregate mode for *metric* given an aggregate config dict."""
+    if not aggregate_cfg:
+        return "mean"
+    mode = aggregate_cfg.get(metric)
+    if mode is None and "_" in metric:
+        base = metric.rsplit("_", 1)[0]
+        mode = aggregate_cfg.get(base)
+    return str(mode or aggregate_cfg.get("default", "mean")).lower()
+
+
+def _suite_metrics_to_stats(
+    entry: Dict[str, Any],
+    aggregate_cfg: Optional[Dict[str, str]] = None,
+) -> Tuple[Dict[str, float], Dict[str, float]]:
     aggregated_values: Dict[str, float] = {}
     stats_flat: Dict[str, float] = {}
     suite_metrics = entry.get("suite_metrics") or {}
@@ -83,13 +99,20 @@ def _suite_metrics_to_stats(entry: Dict[str, Any]) -> Tuple[Dict[str, float], Di
                 stats_flat.update(flatten_metric_stats({metric: stats}))
             agg = payload.get("aggregated")
             if agg is None and stats:
-                agg = stats.get("mean")
+                mode = _resolve_aggregate_mode(metric, aggregate_cfg)
+                agg = stats.get(mode, stats.get("mean"))
             if agg is not None:
                 aggregated_values[metric] = agg
     elif "aggregate" in suite_metrics:
         aggregate = suite_metrics.get("aggregate") or {}
         agg_stats = aggregate.get("stats") or {}
         aggregated_values = aggregate.get("aggregated") or {}
+        if not aggregated_values and agg_stats and aggregate_cfg:
+            for metric, metric_stats in agg_stats.items():
+                mode = _resolve_aggregate_mode(metric, aggregate_cfg)
+                val = metric_stats.get(mode, metric_stats.get("mean"))
+                if val is not None:
+                    aggregated_values[metric] = val
         stats_flat = flatten_metric_stats(agg_stats)
     return stats_flat, aggregated_values
 
@@ -574,15 +597,37 @@ def main():
                 metric_names = entry.get("optimize", {}).get("scoring", [])
                 metric_name_map = {f"w_{i}": name for i, name in enumerate(metric_names)}
             metrics_block = entry.get("metrics", {}) or {}
-            objectives = metrics_block.get("objectives", metrics_block)
+            objectives = dict(metrics_block.get("objectives", metrics_block))
+            aggregate_cfg = entry.get("backtest", {}).get("aggregate")
             stats_flat: Dict[str, float] = {}
             aggregated_values: Dict[str, float] = {}
             if "stats" in metrics_block:
                 stats_flat = flatten_metric_stats(metrics_block["stats"])
             if "suite_metrics" in entry:
-                stats_flat_suite, aggregated_values_suite = _suite_metrics_to_stats(entry)
+                stats_flat_suite, aggregated_values_suite = _suite_metrics_to_stats(
+                    entry, aggregate_cfg=aggregate_cfg,
+                )
                 stats_flat.update(stats_flat_suite)
                 aggregated_values.update(aggregated_values_suite)
+                # Correct objectives for scoring metrics whose aggregate method
+                # is not "mean".  The stored w_i was computed as metric_mean * weight;
+                # the correct value is metric_agg * weight.  We apply a ratio
+                # correction (agg / mean) so we don't need the scoring weights.
+                constraint_violation = metrics_block.get("constraint_violation", 0.0)
+                if aggregate_cfg and not constraint_violation:
+                    scoring_keys = entry.get("optimize", {}).get("scoring", [])
+                    for idx, sk in enumerate(scoring_keys):
+                        mode = _resolve_aggregate_mode(sk, aggregate_cfg)
+                        if mode == "mean":
+                            continue
+                        w_key = f"w_{idx}"
+                        stored = objectives.get(w_key)
+                        if stored is None:
+                            continue
+                        agg_val = aggregated_values.get(sk)
+                        mean_val = stats_flat.get(f"{sk}_mean")
+                        if agg_val is not None and mean_val and mean_val != 0.0:
+                            objectives[w_key] = stored * (agg_val / mean_val)
             if not w_keys:
                 all_w_keys = sorted(k for k in objectives if k.startswith("w_"))
 

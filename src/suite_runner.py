@@ -618,6 +618,8 @@ def apply_scenario(
     available_coins: set[str],
     base_coin_sources: Optional[Dict[str, str]] = None,
     *,
+    base_coins: Optional[List[str]] = None,
+    base_ignored: Optional[List[str]] = None,
     quiet: bool = False,
 ) -> Tuple[Dict[str, Any], List[str]]:
     cfg = deepcopy(base_config)
@@ -635,9 +637,11 @@ def apply_scenario(
         tracker.update(["backtest", "end_date"], backtest_section.get("end_date"), new_end)
         backtest_section["end_date"] = new_end
 
-    scenario_coins = list(scenario.coins) if scenario.coins is not None else list(master_coins)
+    default_coins = base_coins if base_coins is not None else master_coins
+    default_ignored = base_ignored if base_ignored is not None else master_ignored
+    scenario_coins = list(scenario.coins) if scenario.coins is not None else list(default_coins)
     scenario_ignored = (
-        list(scenario.ignored_coins) if scenario.ignored_coins is not None else list(master_ignored)
+        list(scenario.ignored_coins) if scenario.ignored_coins is not None else list(default_ignored)
     )
 
     filtered_coins = [coin for coin in scenario_coins if coin in available_coins]
@@ -834,6 +838,8 @@ async def run_backtest_scenario(
     results_root: Optional[Path],
     disable_plotting: bool,
     base_coin_sources: Optional[Dict[str, str]] = None,
+    base_coins: Optional[List[str]] = None,
+    base_ignored: Optional[List[str]] = None,
 ) -> ScenarioResult:
     from backtest import (
         build_backtest_payload,
@@ -849,6 +855,8 @@ async def run_backtest_scenario(
         available_exchanges=available_exchanges,
         available_coins=available_coins,
         base_coin_sources=base_coin_sources,
+        base_coins=base_coins,
+        base_ignored=base_ignored,
     )
     scenario_config["disable_plotting"] = disable_plotting
 
@@ -1474,6 +1482,8 @@ async def run_backtest_suite_async(
             available_exchanges=dataset_available_exchanges,
             available_coins=available_coins,
             base_coin_sources=suite_coin_sources,
+            base_coins=base_coins,
+            base_ignored=base_ignored,
             quiet=True,
         )
         coin_exchange = _compute_effective_coin_exchange(
@@ -1516,6 +1526,8 @@ async def run_backtest_suite_async(
             suite_dir,
             disable_plotting=disable_plotting,
             base_coin_sources=suite_coin_sources,
+            base_coins=base_coins,
+            base_ignored=base_ignored,
         )
         results.append(result)
         logging.info(

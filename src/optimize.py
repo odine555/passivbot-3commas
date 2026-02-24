@@ -1218,6 +1218,11 @@ class SuiteEvaluator:
         aggregate_stats = aggregate_summary.get("stats", {})
 
         flat_stats = flatten_metric_stats(aggregate_stats)
+        # Override _mean with correctly aggregated values so calc_fitness
+        # respects the aggregate config (e.g. "max" instead of "mean").
+        aggregated_values = aggregate_summary.get("aggregated", {})
+        for metric, agg_value in aggregated_values.items():
+            flat_stats[f"{metric}_mean"] = agg_value
         objectives, total_penalty = self.base.calc_fitness(flat_stats)
         objectives_map = {f"w_{i}": val for i, val in enumerate(objectives)}
 

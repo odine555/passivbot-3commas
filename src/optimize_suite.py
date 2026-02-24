@@ -248,6 +248,8 @@ async def prepare_suite_contexts(
                 available_exchanges=dataset_available_exchanges,
                 available_coins=available_coins,
                 base_coin_sources=suite_coin_sources,
+                base_coins=base_coins_list,
+                base_ignored=base_ignored_list,
             )
         except ValueError as exc:
             logging.warning("Skipping scenario %s: %s", scenario.label, exc)
