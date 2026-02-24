@@ -609,25 +609,6 @@ def main():
                 )
                 stats_flat.update(stats_flat_suite)
                 aggregated_values.update(aggregated_values_suite)
-                # Correct objectives for scoring metrics whose aggregate method
-                # is not "mean".  The stored w_i was computed as metric_mean * weight;
-                # the correct value is metric_agg * weight.  We apply a ratio
-                # correction (agg / mean) so we don't need the scoring weights.
-                constraint_violation = metrics_block.get("constraint_violation", 0.0)
-                if aggregate_cfg and not constraint_violation:
-                    scoring_keys = entry.get("optimize", {}).get("scoring", [])
-                    for idx, sk in enumerate(scoring_keys):
-                        mode = _resolve_aggregate_mode(sk, aggregate_cfg)
-                        if mode == "mean":
-                            continue
-                        w_key = f"w_{idx}"
-                        stored = objectives.get(w_key)
-                        if stored is None:
-                            continue
-                        agg_val = aggregated_values.get(sk)
-                        mean_val = stats_flat.get(f"{sk}_mean")
-                        if agg_val is not None and mean_val and mean_val != 0.0:
-                            objectives[w_key] = stored * (agg_val / mean_val)
             if not w_keys:
                 all_w_keys = sorted(k for k in objectives if k.startswith("w_"))
 
