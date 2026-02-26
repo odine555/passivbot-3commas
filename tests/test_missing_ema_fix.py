@@ -93,6 +93,12 @@ async def test_missing_ema_raises_from_snapshot(monkeypatch):
         def live_value(self, key):
             return False
 
+        def get_raw_balance(self):
+            return float(getattr(self, "balance", 0.0) or 0.0)
+
+        def get_hysteresis_snapped_balance(self):
+            return float(getattr(self, "balance", 0.0) or 0.0)
+
     snapshot = {
         "symbols": [],
         "last_prices": {},
@@ -138,6 +144,12 @@ async def test_missing_ema_raises_from_snapshot_with_return(monkeypatch):
 
         def live_value(self, key):
             return False
+
+        def get_raw_balance(self):
+            return float(getattr(self, "balance", 0.0) or 0.0)
+
+        def get_hysteresis_snapped_balance(self):
+            return float(getattr(self, "balance", 0.0) or 0.0)
 
     snapshot = {
         "symbols": [],

@@ -290,7 +290,7 @@ cache_path = f"caches/ohlcv/{ex}/"           # "caches/ohlcv/binance/"
 1. `src/passivbot_rust.cpython-312-darwin.so` — in the source tree
 2. `venv/lib/python3.12/site-packages/passivbot_rust/` — installed by maturin
 
-`tests/conftest.py` inserts `src/` at the FRONT of `sys.path`, so **pytest always loads the `src/` copy**. `maturin develop` only updates the venv copy.
+`tests/conftest.py` inserts `src/` at the front of `sys.path`, but also has a venv fallback that can prepend `venv/.../site-packages` ahead of `src/` when running outside the venv. In practice, **whichever copy conftest finds first wins** — usually the `src/` copy when running inside the venv. `maturin develop` only updates the venv copy.
 
 **Example**:
 ```bash

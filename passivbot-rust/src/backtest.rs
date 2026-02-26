@@ -535,11 +535,12 @@ impl<'a> Backtest<'a> {
         }
 
         let balance = self.balance.usd_total_balance_rounded;
+        let balance_raw = self.balance.usd_total_balance;
         let allowance = match side {
             LONG => {
                 if self.bot_params_master.long.unstuck_loss_allowance_pct > 0.0 {
                     calc_auto_unstuck_allowance(
-                        balance,
+                        balance_raw,
                         self.bot_params_master.long.unstuck_loss_allowance_pct
                             * self.bot_params_master.long.total_wallet_exposure_limit,
                         self.pnl_cumsum_max,
@@ -552,7 +553,7 @@ impl<'a> Backtest<'a> {
             SHORT => {
                 if self.bot_params_master.short.unstuck_loss_allowance_pct > 0.0 {
                     calc_auto_unstuck_allowance(
-                        balance,
+                        balance_raw,
                         self.bot_params_master.short.unstuck_loss_allowance_pct
                             * self.bot_params_master.short.total_wallet_exposure_limit,
                         self.pnl_cumsum_max,
@@ -769,10 +770,11 @@ impl<'a> Backtest<'a> {
         I: IntoIterator<Item = usize>,
     {
         let balance = self.balance.usd_total_balance_rounded;
+        let balance_raw = self.balance.usd_total_balance;
 
         let long_allowance = if self.bot_params_master.long.unstuck_loss_allowance_pct > 0.0 {
             calc_auto_unstuck_allowance(
-                balance,
+                balance_raw,
                 self.bot_params_master.long.unstuck_loss_allowance_pct
                     * self.bot_params_master.long.total_wallet_exposure_limit,
                 self.pnl_cumsum_max,
@@ -783,7 +785,7 @@ impl<'a> Backtest<'a> {
         };
         let short_allowance = if self.bot_params_master.short.unstuck_loss_allowance_pct > 0.0 {
             calc_auto_unstuck_allowance(
-                balance,
+                balance_raw,
                 self.bot_params_master.short.unstuck_loss_allowance_pct
                     * self.bot_params_master.short.total_wallet_exposure_limit,
                 self.pnl_cumsum_max,
@@ -997,6 +999,7 @@ impl<'a> Backtest<'a> {
 
         orchestrator::OrchestratorInput {
             balance,
+            balance_raw,
             global: orchestrator::OrchestratorGlobal {
                 filter_by_min_effective_cost: self.backtest_params.filter_by_min_effective_cost,
                 unstuck_allowance_long: long_allowance,
@@ -1025,12 +1028,13 @@ impl<'a> Backtest<'a> {
             .unwrap_or_else(|| self.build_orchestrator_input_iter(k, None, 0..self.n_coins));
 
         input.balance = self.balance.usd_total_balance_rounded;
+        input.balance_raw = self.balance.usd_total_balance;
 
-        let balance = input.balance;
+        let balance_raw = input.balance_raw;
         input.global.unstuck_allowance_long =
             if self.bot_params_master.long.unstuck_loss_allowance_pct > 0.0 {
                 calc_auto_unstuck_allowance(
-                    balance,
+                    balance_raw,
                     self.bot_params_master.long.unstuck_loss_allowance_pct
                         * self.bot_params_master.long.total_wallet_exposure_limit,
                     self.pnl_cumsum_max,
@@ -1042,7 +1046,7 @@ impl<'a> Backtest<'a> {
         input.global.unstuck_allowance_short =
             if self.bot_params_master.short.unstuck_loss_allowance_pct > 0.0 {
                 calc_auto_unstuck_allowance(
-                    balance,
+                    balance_raw,
                     self.bot_params_master.short.unstuck_loss_allowance_pct
                         * self.bot_params_master.short.total_wallet_exposure_limit,
                     self.pnl_cumsum_max,
@@ -2893,6 +2897,166 @@ mod tests {
             "expected cached input WEL to update after bot_params change"
         );
         bt.orchestrator_input_cache = Some(input);
+    }
+
+    #[test]
+    fn orchestrator_input_routes_snapped_and_raw_balances_correctly() {
+        let hlcvs = Array3::from_shape_vec((2, 1, 4), vec![1.0; 2 * 1 * 4]).unwrap();
+        let btc_usd_prices = Array1::from_vec(vec![20_000.0, 20_000.0]);
+
+        let mut bp_pair = BotParamsPair::default();
+        bp_pair.long.n_positions = 1;
+        bp_pair.long.total_wallet_exposure_limit = 0.5;
+        bp_pair.long.unstuck_loss_allowance_pct = 0.2;
+        bp_pair.long.ema_span_0 = 10.0;
+        bp_pair.long.ema_span_1 = 20.0;
+
+        let backtest_params = BacktestParams {
+            starting_balance: 1000.0,
+            maker_fee: 0.0,
+            coins: vec!["TEST".to_string()],
+            active_coin_indices: None,
+            first_timestamp_ms: 0,
+            requested_start_timestamp_ms: 0,
+            first_valid_indices: vec![0],
+            last_valid_indices: vec![1],
+            warmup_minutes: vec![0],
+            trade_start_indices: vec![0],
+            global_warmup_bars: 0,
+            btc_collateral_cap: 0.0,
+            btc_collateral_ltv_cap: None,
+            metrics_only: true,
+            filter_by_min_effective_cost: false,
+            hedge_mode: true,
+            max_realized_loss_pct: 1.0,
+            candle_interval_minutes: 1,
+        };
+
+        let mut bt = Backtest::new(
+            hlcvs.view(),
+            btc_usd_prices.view(),
+            vec![bp_pair],
+            vec![ExchangeParams::default()],
+            &backtest_params,
+        );
+
+        bt.balance.usd_total_balance = 200.0;
+        bt.balance.usd_total_balance_rounded = 100.0;
+        bt.pnl_cumsum_max = 10.0;
+        bt.pnl_cumsum_running = 0.0;
+
+        let input = bt.get_orchestrator_input_cached(1, None);
+        assert!(
+            (input.balance - 100.0).abs() < 1e-12,
+            "expected snapped balance to route to input.balance"
+        );
+        assert!(
+            (input.balance_raw - 200.0).abs() < 1e-12,
+            "expected raw balance to route to input.balance_raw"
+        );
+
+        let allowance_pct = 0.2 * 0.5;
+        let expected_from_raw =
+            calc_auto_unstuck_allowance(200.0, allowance_pct, bt.pnl_cumsum_max, bt.pnl_cumsum_running);
+        let expected_from_snapped =
+            calc_auto_unstuck_allowance(100.0, allowance_pct, bt.pnl_cumsum_max, bt.pnl_cumsum_running);
+        assert!(
+            (input.global.unstuck_allowance_long - expected_from_raw).abs() < 1e-12,
+            "expected unstuck allowance to use raw balance"
+        );
+        assert!(
+            (input.global.unstuck_allowance_long - expected_from_snapped).abs() > 1e-9,
+            "allowance should differ from snapped-balance path in this scenario"
+        );
+    }
+
+    #[test]
+    fn backtest_balance_raw_refreshed_on_each_cached_call() {
+        // Verify that balance_raw is updated from self.balance.usd_total_balance
+        // on each call to get_orchestrator_input_cached, even when the cache is reused.
+        let hlcvs = Array3::from_shape_vec((2, 1, 4), vec![1.0; 2 * 1 * 4]).unwrap();
+        let btc_usd_prices = Array1::from_vec(vec![20_000.0, 20_000.0]);
+
+        let mut bp_pair = BotParamsPair::default();
+        bp_pair.long.n_positions = 1;
+        bp_pair.long.total_wallet_exposure_limit = 0.5;
+        bp_pair.long.unstuck_loss_allowance_pct = 0.2;
+        bp_pair.long.ema_span_0 = 10.0;
+        bp_pair.long.ema_span_1 = 20.0;
+
+        let backtest_params = BacktestParams {
+            starting_balance: 1000.0,
+            maker_fee: 0.0,
+            coins: vec!["TEST".to_string()],
+            active_coin_indices: None,
+            first_timestamp_ms: 0,
+            requested_start_timestamp_ms: 0,
+            first_valid_indices: vec![0],
+            last_valid_indices: vec![1],
+            warmup_minutes: vec![0],
+            trade_start_indices: vec![0],
+            global_warmup_bars: 0,
+            btc_collateral_cap: 0.0,
+            btc_collateral_ltv_cap: None,
+            metrics_only: true,
+            filter_by_min_effective_cost: false,
+            hedge_mode: true,
+            max_realized_loss_pct: 1.0,
+            candle_interval_minutes: 1,
+        };
+
+        let mut bt = Backtest::new(
+            hlcvs.view(),
+            btc_usd_prices.view(),
+            vec![bp_pair],
+            vec![ExchangeParams::default()],
+            &backtest_params,
+        );
+
+        // Step 1: initial balance
+        bt.balance.usd_total_balance = 1000.0;
+        bt.balance.usd_total_balance_rounded = 1000.0;
+        bt.pnl_cumsum_max = 0.0;
+        bt.pnl_cumsum_running = 0.0;
+
+        let input1 = bt.get_orchestrator_input_cached(1, None);
+        assert!(
+            (input1.balance_raw - 1000.0).abs() < 1e-12,
+            "first call: balance_raw should be 1000"
+        );
+        assert!(
+            (input1.balance - 1000.0).abs() < 1e-12,
+            "first call: balance should be 1000"
+        );
+        // Return the input to the cache
+        bt.orchestrator_input_cache = Some(input1);
+
+        // Step 2: simulate a fill that changes raw balance but snapped stays
+        bt.balance.usd_total_balance = 1050.0;  // raw changed (profit fill)
+        bt.balance.usd_total_balance_rounded = 1000.0;  // snapped stays (hysteresis)
+        bt.pnl_cumsum_max = 50.0;
+        bt.pnl_cumsum_running = 50.0;
+
+        let input2 = bt.get_orchestrator_input_cached(1, None);
+        assert!(
+            (input2.balance_raw - 1050.0).abs() < 1e-12,
+            "second call: balance_raw should have updated to 1050"
+        );
+        assert!(
+            (input2.balance - 1000.0).abs() < 1e-12,
+            "second call: snapped balance should still be 1000"
+        );
+
+        // Verify the unstuck allowance used the new raw balance, not the old one
+        let allowance_pct = 0.2 * 0.5;
+        let expected_allowance = calc_auto_unstuck_allowance(
+            1050.0, allowance_pct, 50.0, 50.0,
+        );
+        assert!(
+            (input2.global.unstuck_allowance_long - expected_allowance).abs() < 1e-12,
+            "unstuck allowance should use updated raw balance (1050), got {}",
+            input2.global.unstuck_allowance_long
+        );
     }
 
     #[test]

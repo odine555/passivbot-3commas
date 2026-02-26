@@ -1,7 +1,18 @@
+import copy
 import json
 import math
 
 import pytest
+
+
+@pytest.fixture(scope="module", autouse=True)
+def require_real_passivbot_rust_module():
+    import passivbot_rust as pbr
+
+    if getattr(pbr, "__is_stub__", False):
+        pytest.fail(
+            "tests/test_orchestrator_json_api.py requires the real passivbot_rust extension; stub detected"
+        )
 
 
 def bot_params(**overrides):
@@ -166,6 +177,7 @@ def make_symbol(
 def make_input(*, balance: float, global_bp=None, symbols):
     return {
         "balance": balance,
+        "balance_raw": balance,
         "global": {
             "filter_by_min_effective_cost": False,
             "unstuck_allowance_long": 0.0,
@@ -467,3 +479,259 @@ def test_twel_enforcer_emits_auto_reduce():
     inp = make_input(balance=1_000.0, global_bp=global_bp, symbols=[sym0, sym1])
     out = compute(pbr, inp)
     assert any(o["order_type"] == "close_auto_reduce_twel_long" for o in out["orders"])
+
+
+# ---------------------------------------------------------------------------
+# balance_raw semantics tests
+# ---------------------------------------------------------------------------
+
+
+def test_realized_loss_gate_uses_balance_raw():
+    """Realized-loss gate peak/floor uses balance_raw, not snapped balance."""
+    import passivbot_rust as pbr
+
+    # Position underwater: entry 100, bid 80 → close would realize loss.
+    long_bp = {
+        "wallet_exposure_limit": 0.5,
+        "risk_wel_enforcer_threshold": 1.0,
+        "total_wallet_exposure_limit": 1.0,
+        "n_positions": 1,
+    }
+    global_bp = bot_params_pair(long_overrides=long_bp)
+
+    sym = make_symbol(
+        0,
+        bid=80.0,
+        ask=80.0,
+        long_pos_size=10.0,
+        long_pos_price=100.0,
+        long_bp=long_bp,
+    )
+
+    # With snapped balance=1000 and raw balance=980, a tight gate (0.001),
+    # the gate computes peak from balance_raw: peak = 980 + (50-(-20)) = 1050
+    # floor = 1050 * (1 - 0.001) ≈ 1048.95.  Projected balance after
+    # realizing the loss would be well below floor → gate blocks.
+    inp = make_input(balance=1_000.0, global_bp=global_bp, symbols=[sym])
+    inp["balance_raw"] = 980.0
+    inp["global"]["max_realized_loss_pct"] = 0.001  # very tight gate
+    inp["global"]["realized_pnl_cumsum_max"] = 50.0
+    inp["global"]["realized_pnl_cumsum_last"] = -20.0
+
+    out = compute(pbr, inp)
+    loss_gate_blocks = out.get("diagnostics", {}).get("loss_gate_blocks", [])
+    assert len(loss_gate_blocks) > 0, (
+        "expected tight loss gate (0.001) to block close orders on underwater position, "
+        f"but got no loss_gate_blocks. orders: {[o['order_type'] for o in out['orders']]}"
+    )
+
+
+def test_balance_raw_absent_falls_back_to_balance():
+    """When balance_raw is absent, Rust falls back to balance (NaN default)."""
+    import passivbot_rust as pbr
+
+    inp = make_input(
+        balance=1_000.0,
+        symbols=[make_symbol(0, bid=100.0, ask=100.0)],
+    )
+    # Remove balance_raw entirely - Rust default is NaN which falls back to balance
+    inp.pop("balance_raw")
+    out = compute(pbr, inp)
+    # Should work without error
+    assert isinstance(out, dict)
+
+
+def test_balance_raw_zero_gate_returns_early():
+    """When balance_raw is 0.0, the loss gate returns early (non-positive guard)."""
+    import passivbot_rust as pbr
+
+    long_bp = {
+        "close_grid_qty_pct": 1.0,
+        "close_grid_markup_start": 0.01,
+        "close_grid_markup_end": 0.01,
+    }
+    global_bp = bot_params_pair(long_overrides=long_bp)
+    sym = make_symbol(
+        0,
+        bid=100.0,
+        ask=100.0,
+        long_pos_size=1.0,
+        long_pos_price=100.0,
+        long_bp=long_bp,
+    )
+
+    inp = make_input(balance=1_000.0, global_bp=global_bp, symbols=[sym])
+    inp["balance_raw"] = 0.0
+    inp["global"]["max_realized_loss_pct"] = 0.05
+    inp["global"]["realized_pnl_cumsum_max"] = 10.0
+    inp["global"]["realized_pnl_cumsum_last"] = 5.0
+
+    out = compute(pbr, inp)
+    # Gate skips with non-positive balance_raw, close orders should still appear
+    close_orders = [o for o in out["orders"] if o["order_type"].startswith("close_")]
+    assert len(close_orders) > 0
+
+
+def test_balance_raw_negative_gate_returns_early():
+    """When balance_raw is -1.0, the loss gate returns early (non-positive guard)."""
+    import passivbot_rust as pbr
+
+    long_bp = {
+        "close_grid_qty_pct": 1.0,
+        "close_grid_markup_start": 0.01,
+        "close_grid_markup_end": 0.01,
+    }
+    global_bp = bot_params_pair(long_overrides=long_bp)
+    sym = make_symbol(
+        0,
+        bid=100.0,
+        ask=100.0,
+        long_pos_size=1.0,
+        long_pos_price=100.0,
+        long_bp=long_bp,
+    )
+
+    inp = make_input(balance=1_000.0, global_bp=global_bp, symbols=[sym])
+    inp["balance_raw"] = -1.0
+    inp["global"]["max_realized_loss_pct"] = 0.05
+    inp["global"]["realized_pnl_cumsum_max"] = 10.0
+    inp["global"]["realized_pnl_cumsum_last"] = 5.0
+
+    out = compute(pbr, inp)
+    # Gate skips with negative balance_raw, close orders should still appear
+    close_orders = [o for o in out["orders"] if o["order_type"].startswith("close_")]
+    assert len(close_orders) > 0
+
+
+def test_balance_raw_inf_rejected():
+    """When balance_raw is inf, JSON serialization rejects it (not valid JSON)."""
+    import passivbot_rust as pbr
+
+    inp = make_input(
+        balance=1_000.0,
+        symbols=[make_symbol(0, bid=100.0, ask=100.0)],
+    )
+    inp["balance_raw"] = float("inf")
+    # json.dumps with allow_nan=False raises ValueError; with allow_nan=True
+    # the output is not valid JSON per spec. Either way, the Rust parser rejects it.
+    with pytest.raises(ValueError):
+        compute(pbr, inp)
+
+
+def test_balance_raw_nan_rejected_by_json():
+    """When balance_raw is NaN, JSON serialization produces invalid JSON that Rust rejects."""
+    import passivbot_rust as pbr
+
+    inp = make_input(
+        balance=1_000.0,
+        symbols=[make_symbol(0, bid=100.0, ask=100.0)],
+    )
+    inp["balance_raw"] = float("nan")
+    # Python json.dumps encodes NaN as 'NaN' which is not valid JSON;
+    # serde rejects it at parse time.
+    with pytest.raises(ValueError):
+        compute(pbr, inp)
+
+
+def test_loss_gate_uses_balance_raw_when_snapped_and_raw_diverge():
+    import passivbot_rust as pbr
+
+    global_bp = bot_params_pair(
+        long_overrides={
+            "n_positions": 1,
+            "total_wallet_exposure_limit": 1.0,
+        }
+    )
+    sym = make_symbol(
+        0,
+        bid=80.0,
+        ask=80.0,
+        long_pos_size=10.0,
+        long_pos_price=100.0,
+        long_bp={
+            "wallet_exposure_limit": 0.5,
+            "risk_wel_enforcer_threshold": 1.0,
+            "total_wallet_exposure_limit": 1.0,
+            "n_positions": 1,
+        },
+    )
+    inp_blocked = make_input(balance=1_000.0, global_bp=global_bp, symbols=[sym])
+    inp_blocked["global"]["max_realized_loss_pct"] = 0.01
+
+    out_blocked = compute(pbr, inp_blocked)
+    blocked_types = [o["order_type"] for o in out_blocked["orders"]]
+    assert "close_auto_reduce_wel_long" not in blocked_types
+    assert any(
+        b.get("order_type") == "close_auto_reduce_wel_long"
+        for b in out_blocked.get("diagnostics", {}).get("loss_gate_blocks", [])
+    )
+
+    inp_allowed = copy.deepcopy(inp_blocked)
+    inp_allowed["balance_raw"] = 1_000_000.0
+    out_allowed = compute(pbr, inp_allowed)
+    allowed_types = [o["order_type"] for o in out_allowed["orders"]]
+    assert "close_auto_reduce_wel_long" in allowed_types
+    assert not out_allowed.get("diagnostics", {}).get("loss_gate_blocks")
+
+
+def test_twel_enforcer_uses_balance_raw_not_snapped():
+    """TWEL enforcer should use balance_raw for wallet exposure, not snapped balance."""
+    import passivbot_rust as pbr
+
+    long_bp = {
+        "wallet_exposure_limit": 0.4,
+        "total_wallet_exposure_limit": 0.9,
+        "risk_twel_enforcer_threshold": 1.0,
+        "n_positions": 2,
+    }
+    global_bp = bot_params_pair(long_overrides=long_bp)
+    # Two positions: cost = 8*50 + 12*50 = 400 + 600 = 1000.
+    # With snapped balance 2000: total WE = 1000/2000 = 0.5 (under 0.9, no trigger).
+    # With raw balance 1100: total WE = 1000/1100 ≈ 0.909 (over 0.9, triggers).
+    sym0 = make_symbol(0, bid=50.0, ask=50.0, long_pos_size=8.0, long_pos_price=50.0, long_bp=long_bp)
+    sym1 = make_symbol(1, bid=50.0, ask=50.0, long_pos_size=12.0, long_pos_price=50.0, long_bp=long_bp)
+    inp = make_input(balance=2_000.0, global_bp=global_bp, symbols=[sym0, sym1])
+    inp["balance_raw"] = 1_100.0
+
+    out = compute(pbr, inp)
+    order_types = [o["order_type"] for o in out["orders"]]
+    assert "close_auto_reduce_twel_long" in order_types, (
+        "TWEL enforcer should trigger with raw balance (WE=0.909>0.9), "
+        f"not snapped (WE=0.5<0.9). Got: {order_types}"
+    )
+
+
+def test_loss_gate_returns_early_when_raw_is_non_positive():
+    """Non-positive balance_raw causes the loss gate to early-return (gate disabled)."""
+    import passivbot_rust as pbr
+
+    global_bp = bot_params_pair(
+        long_overrides={
+            "n_positions": 1,
+            "total_wallet_exposure_limit": 1.0,
+        }
+    )
+    sym = make_symbol(
+        0,
+        bid=80.0,
+        ask=80.0,
+        long_pos_size=10.0,
+        long_pos_price=100.0,
+        long_bp={
+            "wallet_exposure_limit": 0.5,
+            "risk_wel_enforcer_threshold": 1.0,
+            "total_wallet_exposure_limit": 1.0,
+            "n_positions": 1,
+        },
+    )
+    inp = make_input(balance=1_000.0, global_bp=global_bp, symbols=[sym])
+    inp["global"]["max_realized_loss_pct"] = 0.01
+
+    for raw_balance in [0.0, -1.0]:
+        inp_case = copy.deepcopy(inp)
+        inp_case["balance_raw"] = raw_balance
+        out = compute(pbr, inp_case)
+        order_types = [o["order_type"] for o in out["orders"]]
+        assert "close_auto_reduce_wel_long" in order_types
+        blocks = out.get("diagnostics", {}).get("loss_gate_blocks", [])
+        assert not blocks
