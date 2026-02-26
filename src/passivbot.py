@@ -1,5 +1,6 @@
 from __future__ import annotations
 import os
+import time
 
 # fix Crashes on Windows
 from tools.event_loop_policy import set_windows_event_loop_policy
@@ -3088,23 +3089,32 @@ class Passivbot:
             self._previous_balance_raw = 0.0
         if not hasattr(self, "_previous_balance_snapped"):
             self._previous_balance_snapped = 0.0
+        if not hasattr(self, "_last_raw_only_log_time"):
+            self._last_raw_only_log_time = 0.0
         balance_raw = self.get_raw_balance()
         balance_snapped = self.get_hysteresis_snapped_balance()
         if (
             balance_raw != self._previous_balance_raw
             or balance_snapped != self._previous_balance_snapped
         ):
+            snap_changed = balance_snapped != self._previous_balance_snapped
+            raw_only = not snap_changed
+            now = time.time()
+            should_log = snap_changed or (now - self._last_raw_only_log_time >= 900.0)
             try:
-                equity = balance_raw + (await self.calc_upnl_sum())
-                logging.info(
-                    "[balance] raw %.6f -> %.6f | snap %.6f -> %.6f | equity: %.4f source: %s",
-                    self._previous_balance_raw,
-                    balance_raw,
-                    self._previous_balance_snapped,
-                    balance_snapped,
-                    equity,
-                    source,
-                )
+                if should_log:
+                    equity = balance_raw + (await self.calc_upnl_sum())
+                    logging.info(
+                        "[balance] raw %.6f -> %.6f | snap %.6f -> %.6f | equity: %.4f source: %s",
+                        self._previous_balance_raw,
+                        balance_raw,
+                        self._previous_balance_snapped,
+                        balance_snapped,
+                        equity,
+                        source,
+                    )
+                    if raw_only:
+                        self._last_raw_only_log_time = now
             except Exception as e:
                 logging.error(f"error with handle_balance_update {e}")
                 traceback.print_exc()
