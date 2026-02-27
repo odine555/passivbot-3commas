@@ -1,4 +1,5 @@
 """Test that market_settings_sources is preserved during config formatting."""
+
 import copy
 
 from config_utils import format_config, get_template_config
@@ -34,11 +35,7 @@ def _base_config():
 def test_format_config_preserves_market_settings_sources():
     """market_settings_sources should be preserved during format_config."""
     cfg = _base_config()
-    cfg["backtest"]["market_settings_sources"] = {
-        "BTC": "binance",
-        "ETH": "bybit",
-        "SOL": "gateio"
-    }
+    cfg["backtest"]["market_settings_sources"] = {"BTC": "binance", "ETH": "bybit", "SOL": "gateio"}
     out = format_config(copy.deepcopy(cfg), verbose=False)
     assert out["backtest"]["market_settings_sources"] == cfg["backtest"]["market_settings_sources"]
     assert out["backtest"]["market_settings_sources"]["BTC"] == "binance"

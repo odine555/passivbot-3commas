@@ -33,7 +33,6 @@ from utils import make_get_filepath
 from pure_funcs import denumpyize, ts_to_date
 import passivbot_rust as pbr
 
-
 plt.rcParams["figure.figsize"] = [21, 13]
 
 try:  # pragma: no cover
@@ -826,9 +825,7 @@ def create_forager_twe_figure(
         return_figures = not autoplot
 
     # Resample to reduce point density — take last value per time bucket
-    twe = fdf.set_index("timestamp")[["twe_long", "twe_short"]].apply(
-        pd.to_numeric, errors="coerce"
-    )
+    twe = fdf.set_index("timestamp")[["twe_long", "twe_short"]].apply(pd.to_numeric, errors="coerce")
     # twe_short is stored as signed negative; ensure it plots below zero
     twe["twe_short"] = -twe["twe_short"].abs()
     twe = twe.resample("1h").mean().dropna(how="all").ffill()
@@ -837,9 +834,7 @@ def create_forager_twe_figure(
     x = twe.index.to_numpy()
 
     ax.fill_between(x, 0, twe["twe_long"].to_numpy(), alpha=0.35, color="tab:blue", label="TWE Long")
-    ax.fill_between(
-        x, 0, twe["twe_short"].to_numpy(), alpha=0.35, color="tab:red", label="TWE Short"
-    )
+    ax.fill_between(x, 0, twe["twe_short"].to_numpy(), alpha=0.35, color="tab:red", label="TWE Short")
     ax.plot(x, twe["twe_long"].to_numpy(), linewidth=0.7, color="tab:blue")
     ax.plot(x, twe["twe_short"].to_numpy(), linewidth=0.7, color="tab:red")
 
@@ -913,9 +908,7 @@ def create_forager_pnl_figure(
     fig, ax = plt.subplots(1, 1, figsize=figsize)
     x = combined.index.to_numpy()
     ax.plot(x, combined["pnl_cumsum"].to_numpy(), linewidth=1.0, label="PnL Cumsum")
-    ax.plot(
-        x, combined["pnl_cumsum_plus_upnl"].to_numpy(), linewidth=1.0, label="PnL Cumsum + uPnL"
-    )
+    ax.plot(x, combined["pnl_cumsum_plus_upnl"].to_numpy(), linewidth=1.0, label="PnL Cumsum + uPnL")
     ax.set_title("Cumulative Net PnL (USD)")
     ax.set_ylabel("USD")
     ax.set_xlabel("Time")

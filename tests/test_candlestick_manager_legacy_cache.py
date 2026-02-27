@@ -194,15 +194,11 @@ def test_global_legacy_migration_covers_all_exchanges(tmp_path, monkeypatch):
     np.save(legacy_binance / f"{day}.npy", legacy)
     np.save(legacy_bybit / f"{day}.npy", legacy)
 
-    CandlestickManager(
-        exchange=None, exchange_name="binanceusdm", cache_dir=str(tmp_path / "caches")
-    )
+    CandlestickManager(exchange=None, exchange_name="binanceusdm", cache_dir=str(tmp_path / "caches"))
 
     binance_symbol = _sanitize_symbol("BTC/USDT:USDT")
     bybit_symbol = _sanitize_symbol("ETH/USDT:USDT")
-    binance_target = (
-        tmp_path / "caches" / "ohlcv" / "binance" / "1m" / binance_symbol / f"{day}.npy"
-    )
+    binance_target = tmp_path / "caches" / "ohlcv" / "binance" / "1m" / binance_symbol / f"{day}.npy"
     bybit_target = tmp_path / "caches" / "ohlcv" / "bybit" / "1m" / bybit_symbol / f"{day}.npy"
 
     assert binance_target.exists()

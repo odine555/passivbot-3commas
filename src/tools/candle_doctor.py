@@ -157,10 +157,7 @@ def check_shard_date_mismatch(arr: np.ndarray, date_key: str) -> bool:
     """Return True if any timestamps fall outside the UTC day indicated by filename."""
     try:
         day_start = int(
-            datetime.strptime(date_key, "%Y-%m-%d")
-            .replace(tzinfo=timezone.utc)
-            .timestamp()
-            * 1000
+            datetime.strptime(date_key, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp() * 1000
         )
     except ValueError:
         return True
@@ -511,9 +508,7 @@ def scan_symbol(
 
         # Check OHLC sanity
         ohlc_issues = check_ohlc_sanity(arr)
-        has_nan_inf = any(
-            "NaN" in msg or "Inf" in msg for _, msg in ohlc_issues
-        )
+        has_nan_inf = any("NaN" in msg or "Inf" in msg for _, msg in ohlc_issues)
         for severity, msg in ohlc_issues:
             fixable = "NaN" in msg or "Inf" in msg
             issue = Issue(

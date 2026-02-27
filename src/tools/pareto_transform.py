@@ -26,12 +26,10 @@ from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Sequence,
 
 import numpy as np
 
-
 if __package__ in (None, ""):
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from utils import json_dumps_streamlined
-
 
 METRIC_SUFFIXES = {
     "_mean": "mean",

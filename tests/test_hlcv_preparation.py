@@ -33,7 +33,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from hlcv_preparation import HLCVManager, prepare_hlcvs, prepare_hlcvs_combined
 from candlestick_manager import CandlestickManager, CANDLE_DTYPE
 
-
 # ============================================================================
 # Fixtures
 # ============================================================================
@@ -753,14 +752,16 @@ class TestOHLCVSourceDir:
         day = "2024-01-15"
         day_ts = int(date_to_ts(day))
         timestamps = np.arange(day_ts, day_ts + 24 * 60 * 60 * 1000, 60_000)
-        data = np.column_stack([
-            timestamps,
-            np.full(len(timestamps), 50000.0),  # open
-            np.full(len(timestamps), 50100.0),  # high
-            np.full(len(timestamps), 49900.0),  # low
-            np.full(len(timestamps), 50050.0),  # close
-            np.full(len(timestamps), 100.0),    # volume
-        ])
+        data = np.column_stack(
+            [
+                timestamps,
+                np.full(len(timestamps), 50000.0),  # open
+                np.full(len(timestamps), 50100.0),  # high
+                np.full(len(timestamps), 49900.0),  # low
+                np.full(len(timestamps), 50050.0),  # close
+                np.full(len(timestamps), 100.0),  # volume
+            ]
+        )
         dump_ohlcv_data(data, str(exchange_dir / f"{day}.npy"))
 
         # Create HLCVManager with source dir (end_date must be next day to include full day)
@@ -806,15 +807,16 @@ class TestOHLCVSourceDir:
         day_ts = int(date_to_ts(day))
         timestamps = np.arange(day_ts, day_ts + 24 * 60 * 60 * 1000, 60_000, dtype=np.int64)
 
-        candles = np.zeros(len(timestamps), dtype=[
-            ('ts', 'i8'), ('o', 'f8'), ('h', 'f8'), ('l', 'f8'), ('c', 'f8'), ('bv', 'f8')
-        ])
-        candles['ts'] = timestamps
-        candles['o'] = 3000.0
-        candles['h'] = 3010.0
-        candles['l'] = 2990.0
-        candles['c'] = 3005.0
-        candles['bv'] = 50.0
+        candles = np.zeros(
+            len(timestamps),
+            dtype=[("ts", "i8"), ("o", "f8"), ("h", "f8"), ("l", "f8"), ("c", "f8"), ("bv", "f8")],
+        )
+        candles["ts"] = timestamps
+        candles["o"] = 3000.0
+        candles["h"] = 3010.0
+        candles["l"] = 2990.0
+        candles["c"] = 3005.0
+        candles["bv"] = 50.0
 
         np.savez_compressed(exchange_dir / f"{day}.npz", candles=candles)
 
@@ -883,15 +885,15 @@ class TestOHLCVSourceDir:
         }
 
         # Mock CandlestickManager to return synthetic data
-        with patch.object(CandlestickManager, 'get_candles') as mock_get_candles:
+        with patch.object(CandlestickManager, "get_candles") as mock_get_candles:
             timestamps = np.arange(day_ts, day_ts + 24 * 60 * 60 * 1000, 60_000, dtype=np.int64)
             mock_candles = np.zeros(len(timestamps), dtype=CANDLE_DTYPE)
-            mock_candles['ts'] = timestamps
-            mock_candles['o'] = 50000.0
-            mock_candles['h'] = 50100.0
-            mock_candles['l'] = 49900.0
-            mock_candles['c'] = 50050.0
-            mock_candles['bv'] = 100.0
+            mock_candles["ts"] = timestamps
+            mock_candles["o"] = 50000.0
+            mock_candles["h"] = 50100.0
+            mock_candles["l"] = 49900.0
+            mock_candles["c"] = 50050.0
+            mock_candles["bv"] = 100.0
             mock_get_candles.return_value = mock_candles
 
             df = await om.get_ohlcvs("BTC")
@@ -918,14 +920,16 @@ class TestOHLCVSourceDir:
         timestamps_full = np.arange(day_ts, day_ts + 24 * 60 * 60 * 1000, 60_000)
         timestamps = np.concatenate([timestamps_full[:100], timestamps_full[105:]])
 
-        data = np.column_stack([
-            timestamps,
-            np.full(len(timestamps), 50000.0),
-            np.full(len(timestamps), 50100.0),
-            np.full(len(timestamps), 49900.0),
-            np.full(len(timestamps), 50050.0),
-            np.full(len(timestamps), 100.0),
-        ])
+        data = np.column_stack(
+            [
+                timestamps,
+                np.full(len(timestamps), 50000.0),
+                np.full(len(timestamps), 50100.0),
+                np.full(len(timestamps), 49900.0),
+                np.full(len(timestamps), 50050.0),
+                np.full(len(timestamps), 100.0),
+            ]
+        )
         dump_ohlcv_data(data, str(exchange_dir / f"{day}.npy"))
 
         om = HLCVManager(
@@ -950,15 +954,15 @@ class TestOHLCVSourceDir:
             }
         }
 
-        with patch.object(CandlestickManager, 'get_candles') as mock_get_candles:
+        with patch.object(CandlestickManager, "get_candles") as mock_get_candles:
             full_timestamps = np.arange(day_ts, day_ts + 24 * 60 * 60 * 1000, 60_000, dtype=np.int64)
             mock_candles = np.zeros(len(full_timestamps), dtype=CANDLE_DTYPE)
-            mock_candles['ts'] = full_timestamps
-            mock_candles['o'] = 50000.0
-            mock_candles['h'] = 50100.0
-            mock_candles['l'] = 49900.0
-            mock_candles['c'] = 50050.0
-            mock_candles['bv'] = 100.0
+            mock_candles["ts"] = full_timestamps
+            mock_candles["o"] = 50000.0
+            mock_candles["h"] = 50100.0
+            mock_candles["l"] = 49900.0
+            mock_candles["c"] = 50050.0
+            mock_candles["bv"] = 100.0
             mock_get_candles.return_value = mock_candles
 
             df = await om.get_ohlcvs("BTC")
@@ -983,17 +987,21 @@ class TestOHLCVSourceDir:
 
         # Create data with 3-hour gap (exceeds default 2-hour tolerance)
         timestamps_part1 = np.arange(day_ts, day_ts + 6 * 60 * 60 * 1000, 60_000)
-        timestamps_part2 = np.arange(day_ts + 9 * 60 * 60 * 1000, day_ts + 24 * 60 * 60 * 1000, 60_000)
+        timestamps_part2 = np.arange(
+            day_ts + 9 * 60 * 60 * 1000, day_ts + 24 * 60 * 60 * 1000, 60_000
+        )
         timestamps = np.concatenate([timestamps_part1, timestamps_part2])
 
-        data = np.column_stack([
-            timestamps,
-            np.full(len(timestamps), 50000.0),
-            np.full(len(timestamps), 50100.0),
-            np.full(len(timestamps), 49900.0),
-            np.full(len(timestamps), 50050.0),
-            np.full(len(timestamps), 100.0),
-        ])
+        data = np.column_stack(
+            [
+                timestamps,
+                np.full(len(timestamps), 50000.0),
+                np.full(len(timestamps), 50100.0),
+                np.full(len(timestamps), 49900.0),
+                np.full(len(timestamps), 50050.0),
+                np.full(len(timestamps), 100.0),
+            ]
+        )
         dump_ohlcv_data(data, str(exchange_dir / f"{day}.npy"))
 
         # Create HLCVManager with source dir and default gap tolerance (120 minutes)
@@ -1020,15 +1028,15 @@ class TestOHLCVSourceDir:
         }
 
         # Mock CandlestickManager fallback
-        with patch.object(CandlestickManager, 'get_candles') as mock_get_candles:
+        with patch.object(CandlestickManager, "get_candles") as mock_get_candles:
             full_timestamps = np.arange(day_ts, day_ts + 24 * 60 * 60 * 1000, 60_000, dtype=np.int64)
             mock_candles = np.zeros(len(full_timestamps), dtype=CANDLE_DTYPE)
-            mock_candles['ts'] = full_timestamps
-            mock_candles['o'] = 50000.0
-            mock_candles['h'] = 50100.0
-            mock_candles['l'] = 49900.0
-            mock_candles['c'] = 50050.0
-            mock_candles['bv'] = 100.0
+            mock_candles["ts"] = full_timestamps
+            mock_candles["o"] = 50000.0
+            mock_candles["h"] = 50100.0
+            mock_candles["l"] = 49900.0
+            mock_candles["c"] = 50050.0
+            mock_candles["bv"] = 100.0
             mock_get_candles.return_value = mock_candles
 
             df = await om.get_ohlcvs("BTC")
@@ -1039,7 +1047,9 @@ class TestOHLCVSourceDir:
             assert len(df) == 1441  # end_ts is inclusive (00:00:00 on day 15 to 00:00:00 on day 16)
 
     @pytest.mark.asyncio
-    async def test_source_dir_stock_perp_weekend_like_gap_uses_source_dir(self, tmp_path, mock_exchange):
+    async def test_source_dir_stock_perp_weekend_like_gap_uses_source_dir(
+        self, tmp_path, mock_exchange
+    ):
         """Stock-perp source-dir gaps below 4d floor should not force fallback."""
         from ohlcv_utils import dump_ohlcv_data
         from utils import date_to_ts
@@ -1053,18 +1063,22 @@ class TestOHLCVSourceDir:
 
         # Two candles with a large intra-day gap (~1439 min), above default 120
         # but below stock-perp tolerance floor (4 days = 5760 min).
-        timestamps = np.array([
-            day_ts,
-            day_ts + (23 * 60 + 59) * 60_000,
-        ])
-        data = np.column_stack([
-            timestamps,
-            np.full(len(timestamps), 180.0),
-            np.full(len(timestamps), 181.0),
-            np.full(len(timestamps), 179.0),
-            np.full(len(timestamps), 180.5),
-            np.full(len(timestamps), 10.0),
-        ])
+        timestamps = np.array(
+            [
+                day_ts,
+                day_ts + (23 * 60 + 59) * 60_000,
+            ]
+        )
+        data = np.column_stack(
+            [
+                timestamps,
+                np.full(len(timestamps), 180.0),
+                np.full(len(timestamps), 181.0),
+                np.full(len(timestamps), 179.0),
+                np.full(len(timestamps), 180.5),
+                np.full(len(timestamps), 10.0),
+            ]
+        )
         dump_ohlcv_data(data, str(exchange_dir / f"{day}.npy"))
 
         om = HLCVManager(
@@ -1090,7 +1104,7 @@ class TestOHLCVSourceDir:
             }
         }
 
-        with patch.object(CandlestickManager, 'get_candles') as mock_get_candles:
+        with patch.object(CandlestickManager, "get_candles") as mock_get_candles:
             mock_get_candles.return_value = np.zeros(0, dtype=CANDLE_DTYPE)
             df = await om.get_ohlcvs("xyz:AAPL")
 
@@ -1137,11 +1151,11 @@ class TestOHLCVSourceDir:
         }
 
         # Mock CandlestickManager fallback
-        with patch.object(CandlestickManager, 'get_candles') as mock_get_candles:
+        with patch.object(CandlestickManager, "get_candles") as mock_get_candles:
             timestamps = np.arange(day_ts, day_ts + 24 * 60 * 60 * 1000, 60_000, dtype=np.int64)
             mock_candles = np.zeros(len(timestamps), dtype=CANDLE_DTYPE)
-            mock_candles['ts'] = timestamps
-            mock_candles['c'] = 50000.0
+            mock_candles["ts"] = timestamps
+            mock_candles["c"] = 50000.0
             mock_get_candles.return_value = mock_candles
 
             df = await om.get_ohlcvs("BTC")

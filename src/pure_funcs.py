@@ -7,7 +7,6 @@ from hashlib import sha256
 
 import numpy as np
 
-
 __all__ = [
     "safe_filename",
     "numpyize",

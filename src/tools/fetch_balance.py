@@ -18,6 +18,7 @@ and credentials (apiKey/key and secret). Example:
   }
 }
 """
+
 from __future__ import annotations
 
 import argparse

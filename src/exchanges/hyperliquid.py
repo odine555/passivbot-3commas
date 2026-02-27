@@ -90,7 +90,11 @@ class HyperliquidBot(CCXTBot):
                 isolated_count += 1
                 self.max_leverage[symbol] = min(
                     self.HIP3_MAX_LEVERAGE,
-                    int(elm["info"]["maxLeverage"]) if "maxLeverage" in elm["info"] else self.HIP3_MAX_LEVERAGE,
+                    (
+                        int(elm["info"]["maxLeverage"])
+                        if "maxLeverage" in elm["info"]
+                        else self.HIP3_MAX_LEVERAGE
+                    ),
                 )
             else:
                 self.max_leverage[symbol] = (
@@ -99,7 +103,9 @@ class HyperliquidBot(CCXTBot):
         self.n_decimal_places = 6
         self.n_significant_figures = 5
         if isolated_count:
-            logging.info(f"Detected {isolated_count} isolated-margin-only symbols (HIP-3/stock perps)")
+            logging.info(
+                f"Detected {isolated_count} isolated-margin-only symbols (HIP-3/stock perps)"
+            )
 
     def _requires_isolated_margin(self, symbol: str) -> bool:
         """Check if a symbol requires isolated margin mode.
@@ -320,13 +326,18 @@ class HyperliquidBot(CCXTBot):
         params = (
             {"vaultAddress": self.user_info["wallet_address"]} if self.user_info["is_vault"] else {}
         )
+
         def _is_already_gone(payload) -> bool:
             try:
                 text = str(payload)
             except Exception:
                 text = ""
             text_l = text.lower()
-            if "order was never placed" in text_l or "already canceled" in text_l or "already cancelled" in text_l:
+            if (
+                "order was never placed" in text_l
+                or "already canceled" in text_l
+                or "already cancelled" in text_l
+            ):
                 return True
             return False
 

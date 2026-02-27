@@ -26,7 +26,6 @@ from pareto_store import (
 )
 from metrics_schema import flatten_metric_stats
 
-
 # ---------------------------------------------------------------------------
 # _resolve_aggregate_mode
 # ---------------------------------------------------------------------------
@@ -159,9 +158,7 @@ class TestAggregateMetricsConfig:
             ScenarioResult(
                 scenario=SuiteScenario(f"s{i}", None, None, None, None),
                 per_exchange={},
-                metrics={
-                    "stats": {metric_name: {"mean": v, "min": v, "max": v, "std": 0.0}}
-                },
+                metrics={"stats": {metric_name: {"mean": v, "min": v, "max": v, "std": 0.0}}},
                 elapsed_seconds=0.0,
                 output_path=None,
             )
@@ -246,9 +243,7 @@ class TestApplyScenarioBaseCoins:
         assert coins == ["BTC", "DOGE", "ETH"]
 
     def test_explicit_coins_ignores_base_coins(self):
-        scenario = SuiteScenario(
-            "subset", None, None, coins=["DOGE", "SHIB"], ignored_coins=None
-        )
+        scenario = SuiteScenario("subset", None, None, coins=["DOGE", "SHIB"], ignored_coins=None)
         base_coins = ["BTC", "ETH"]
         master_coins = ["BTC", "ETH", "DOGE", "SHIB"]
         _, coins = apply_scenario(
@@ -352,9 +347,11 @@ class TestObjectivesNotDoubleCorrected:
                     "max": max_values[sk],
                     "std": 10.0,
                 },
-                "aggregated": max_values[sk]
-                if self.AGGREGATE_CFG.get(sk, "mean") != "mean"
-                else mean_values[sk],
+                "aggregated": (
+                    max_values[sk]
+                    if self.AGGREGATE_CFG.get(sk, "mean") != "mean"
+                    else mean_values[sk]
+                ),
                 "scenarios": {},
             }
 
@@ -383,7 +380,8 @@ class TestObjectivesNotDoubleCorrected:
         aggregate_cfg = entry.get("backtest", {}).get("aggregate")
         if "suite_metrics" in entry:
             stats_flat_suite, aggregated_values = _suite_metrics_to_stats(
-                entry, aggregate_cfg=aggregate_cfg,
+                entry,
+                aggregate_cfg=aggregate_cfg,
             )
         # main() does NOT modify objectives — verify they are unchanged
         assert objectives["w_0"] == pytest.approx(0.001)
@@ -399,7 +397,8 @@ class TestObjectivesNotDoubleCorrected:
 
         aggregate_cfg = entry.get("backtest", {}).get("aggregate")
         _, aggregated_values = _suite_metrics_to_stats(
-            entry, aggregate_cfg=aggregate_cfg,
+            entry,
+            aggregate_cfg=aggregate_cfg,
         )
         # Limit filtering sees the correct max value (300), not the mean (150)
         assert aggregated_values["high_exposure_hours_max_long"] == 300.0

@@ -32,7 +32,6 @@ import numpy as np
 from tqdm.auto import tqdm
 from datetime import datetime, UTC
 
-
 DEFAULT_ROOT = Path("caches/hlcvs_data")
 
 
@@ -263,8 +262,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Inspect and verify cached HLCVS datasets.",
         formatter_class=argparse.RawTextHelpFormatter,
-        epilog=textwrap.dedent(
-            """
+        epilog=textwrap.dedent("""
             Commonly used flags:
               summarize                  --fast  --json
               compare                    --fast
@@ -274,8 +272,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
               compare-historical-hashes  --apply  --local-root PATH
 
             Tip: every sub-command also supports -h/--help for full details.
-            """
-        ).strip(),
+            """).strip(),
     )
     subparsers = parser.add_subparsers(dest="command", metavar="command")
 

@@ -11,10 +11,10 @@ import pytest
 from passivbot import Passivbot
 from backtest import prep_backtest_args
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_fill_event(pnl: float, timestamp: float = 0.0) -> types.SimpleNamespace:
     """Create a minimal fill-event namespace with a .pnl attribute."""

@@ -50,7 +50,6 @@ from fill_events_manager import (
 from config_utils import format_config, load_config
 from logging_setup import configure_logging
 
-
 # Global log buffer for UI display
 _LOG_BUFFER: deque = deque(maxlen=200)
 _LOG_LOCK = threading.Lock()

@@ -181,9 +181,7 @@ class TestExchangeVariations:
         formatted = format_config(deepcopy(cfg), verbose=False)
         suite_cfg = extract_suite_config(formatted, None)
 
-        scenarios, _ = build_scenarios(
-            suite_cfg, base_exchanges=["binance", "bybit", "kucoin"]
-        )
+        scenarios, _ = build_scenarios(suite_cfg, base_exchanges=["binance", "bybit", "kucoin"])
 
         assert len(scenarios) == 1
         assert scenarios[0].exchanges == ["binance", "bybit"]
@@ -315,12 +313,8 @@ class TestCoinVariations:
         """TC3.6: Conflicting coin_sources across scenarios raises error."""
         config = {"backtest": {"coin_sources": {}}}
         scenarios = [
-            SuiteScenario(
-                "a", None, None, None, None, coin_sources={"BTC": "binance"}
-            ),
-            SuiteScenario(
-                "b", None, None, None, None, coin_sources={"BTC": "bybit"}
-            ),  # Conflict!
+            SuiteScenario("a", None, None, None, None, coin_sources={"BTC": "binance"}),
+            SuiteScenario("b", None, None, None, None, coin_sources={"BTC": "bybit"}),  # Conflict!
         ]
 
         with pytest.raises(ValueError, match="forces"):
@@ -412,12 +406,8 @@ class TestOverrideVariations:
 
         scenarios, _ = build_scenarios(suite_cfg, base_exchanges=["binance"])
 
-        assert (
-            scenarios[0].overrides["bot.long.total_wallet_exposure_limit"] == 0.5
-        )
-        assert (
-            scenarios[0].overrides["bot.short.total_wallet_exposure_limit"] == 0.5
-        )
+        assert scenarios[0].overrides["bot.long.total_wallet_exposure_limit"] == 0.5
+        assert scenarios[0].overrides["bot.short.total_wallet_exposure_limit"] == 0.5
 
     def test_tc5_2_scenario_disabling_position_side(self):
         """TC5.2: Scenario disabling a position side."""

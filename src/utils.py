@@ -21,7 +21,6 @@ from custom_endpoint_overrides import (
 )
 from config_transform import record_transform
 
-
 logging.basicConfig(
     format="%(asctime)s %(levelname)-8s %(message)s",
     level=logging.INFO,
@@ -1373,3 +1372,23 @@ async def get_first_ohlcv_iteratively(cc, symbol):
         return daily_chunk[0]
 
     return best_candle
+
+
+def deep_get(d, key_path, default=0.0):
+    """
+    Get value from nested dict using dot notation or simple key.
+    Examples:
+        deep_get(d, "aggregated")             → d["aggregated"]
+        deep_get(d, "scenarios.base")         → d["scenarios"]["base"]
+        deep_get(d, "scenarios.n_positions=3") → d["scenarios"]["n_positions=3"]
+    """
+    if "." not in key_path:
+        return d.get(key_path, default)
+
+    keys = key_path.split(".")
+    current = d
+    for k in keys:
+        if not isinstance(current, dict):
+            return default
+        current = current.get(k, default)
+    return current

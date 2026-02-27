@@ -67,7 +67,9 @@ from legacy_data_migrator import (
 )
 
 # Suppress portalocker's "timeout has no effect in blocking mode" warning
-warnings.filterwarnings("ignore", message="timeout has no effect in blocking mode", module="portalocker")
+warnings.filterwarnings(
+    "ignore", message="timeout has no effect in blocking mode", module="portalocker"
+)
 
 # ----- Constants and dtypes -----
 
@@ -268,7 +270,9 @@ def _quarantine_gateio_cache_if_stale(cache_base: str, cutoff_date: str) -> None
     try:
         cutoff = datetime.strptime(cutoff_date, "%Y-%m-%d").date()
     except Exception:
-        logging.warning("Invalid GATEIO_CACHE_CUTOFF_DATE=%r; skipping gateio cache check", cutoff_date)
+        logging.warning(
+            "Invalid GATEIO_CACHE_CUTOFF_DATE=%r; skipping gateio cache check", cutoff_date
+        )
         return
 
     gateio_root = os.path.join(cache_base, "gateio")
@@ -1891,9 +1895,7 @@ class CandlestickManager:
             count = len(replaced)
             if self._candle_replace_batch_mode:
                 # Batch mode: collect for aggregated summary later
-                self._candle_replace_batch[symbol] = (
-                    self._candle_replace_batch.get(symbol, 0) + count
-                )
+                self._candle_replace_batch[symbol] = self._candle_replace_batch.get(symbol, 0) + count
             else:
                 # Normal operation: log at DEBUG (individual messages are noisy)
                 self.log.debug(
@@ -3859,13 +3861,28 @@ class CandlestickManager:
                 df = table.to_pandas()
 
                 # Rename columns to match expected format
-                col_map = {"ts": "timestamp", "o": "open", "h": "high", "l": "low", "c": "close", "bv": "volume"}
+                col_map = {
+                    "ts": "timestamp",
+                    "o": "open",
+                    "h": "high",
+                    "l": "low",
+                    "c": "close",
+                    "bv": "volume",
+                }
                 df = df.rename(columns=col_map)
 
-                self._log("debug", "hyperliquid_archive_hit", symbol=symbol, day_key=day_key, path=str(cache_path))
+                self._log(
+                    "debug",
+                    "hyperliquid_archive_hit",
+                    symbol=symbol,
+                    day_key=day_key,
+                    path=str(cache_path),
+                )
                 return self._ohlcv_df_to_day_arr(df, day_key)
             except Exception as e:
-                self._log("debug", "hyperliquid_archive_error", symbol=symbol, day_key=day_key, error=str(e))
+                self._log(
+                    "debug", "hyperliquid_archive_error", symbol=symbol, day_key=day_key, error=str(e)
+                )
 
         # 2. For stock perps, try TradFi data fetch
         try:
@@ -3936,14 +3953,16 @@ class CandlestickManager:
                 # Convert to day array format
                 import pandas as pd
 
-                df = pd.DataFrame({
-                    "timestamp": arr["ts"],
-                    "open": arr["o"],
-                    "high": arr["h"],
-                    "low": arr["l"],
-                    "close": arr["c"],
-                    "volume": arr["bv"],
-                })
+                df = pd.DataFrame(
+                    {
+                        "timestamp": arr["ts"],
+                        "open": arr["o"],
+                        "high": arr["h"],
+                        "low": arr["l"],
+                        "close": arr["c"],
+                        "volume": arr["bv"],
+                    }
+                )
                 return self._ohlcv_df_to_day_arr(df, day_key)
 
         except Exception as e:
@@ -3975,14 +3994,16 @@ class CandlestickManager:
 
             cache_path.parent.mkdir(parents=True, exist_ok=True)
 
-            table = pa.table({
-                "ts": pa.array(arr["ts"].astype("int64")),
-                "o": pa.array(arr["o"].astype("float32")),
-                "h": pa.array(arr["h"].astype("float32")),
-                "l": pa.array(arr["l"].astype("float32")),
-                "c": pa.array(arr["c"].astype("float32")),
-                "bv": pa.array(arr["bv"].astype("float32")),
-            })
+            table = pa.table(
+                {
+                    "ts": pa.array(arr["ts"].astype("int64")),
+                    "o": pa.array(arr["o"].astype("float32")),
+                    "h": pa.array(arr["h"].astype("float32")),
+                    "l": pa.array(arr["l"].astype("float32")),
+                    "c": pa.array(arr["c"].astype("float32")),
+                    "bv": pa.array(arr["bv"].astype("float32")),
+                }
+            )
             pq.write_table(table, cache_path, compression="zstd")
             self._log("debug", "tradfi_cache_saved", path=str(cache_path))
         except Exception as e:
@@ -4082,9 +4103,7 @@ class CandlestickManager:
                         day_key = self._date_key(end_ts)
                         _, day_end = self._date_range_of_key(day_key)
                         archive_freshness_hours = 72
-                        archive_cutoff_ms = _utc_now_ms() - (
-                            archive_freshness_hours * 3600 * 1000
-                        )
+                        archive_cutoff_ms = _utc_now_ms() - (archive_freshness_hours * 3600 * 1000)
                         if day_end <= archive_cutoff_ms:
                             probed = True
                             try:

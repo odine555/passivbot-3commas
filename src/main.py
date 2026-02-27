@@ -4,7 +4,6 @@ import os
 import platform
 import sys
 
-
 if __name__ == "__main__":
     min_version = (3, 12)
     if sys.version_info < min_version:

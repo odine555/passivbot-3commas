@@ -289,23 +289,17 @@ def create_positions(fills: pd.DataFrame, long: bool):
             symbol_size=symbol_size,
             label_opts=opts.LabelOpts(
                 color="#2c2f30",
-                formatter=JsCode(
-                    """function (params) {
+                formatter=JsCode("""function (params) {
                                 return 'WE ' + params.value[2];
                                }
-                           """
-                ),
+                           """),
             ),
-            tooltip_opts=opts.TooltipOpts(
-                formatter=JsCode(
-                    """function (params) {
+            tooltip_opts=opts.TooltipOpts(formatter=JsCode("""function (params) {
                                 return params.value[0] +
                                        '<br>Price: ' + params.value[1] +
                                        '<br>WE: ' + params.value[2];
                                 }
-                           """
-                )
-            ),
+                           """)),
         )
         .add_dataset(entries_we)
         .set_global_opts(**scatters_global_options)
@@ -325,24 +319,18 @@ def create_positions(fills: pd.DataFrame, long: bool):
             symbol_size=symbol_size,
             label_opts=opts.LabelOpts(
                 color="#0b611c",
-                formatter=JsCode(
-                    """function (params) {
+                formatter=JsCode("""function (params) {
                                 return '▲'+params.value[2];
                                }
-                           """
-                ),
+                           """),
             ),
-            tooltip_opts=opts.TooltipOpts(
-                formatter=JsCode(
-                    """function (params) {
+            tooltip_opts=opts.TooltipOpts(formatter=JsCode("""function (params) {
                                 return params.value[0] +
                                        '<br>Price:  ' + params.value[1] +
                                        '<br>Profit: ' + params.value[2] +
                                        '<br>WE:     ' + params.value[3];
                                 }
-                           """
-                )
-            ),
+                           """)),
         )
         .set_global_opts(**scatters_global_options)
     )
@@ -360,24 +348,18 @@ def create_positions(fills: pd.DataFrame, long: bool):
             symbol_size=symbol_size,
             label_opts=opts.LabelOpts(
                 color="#610b0b",
-                formatter=JsCode(
-                    """function (params) {
+                formatter=JsCode("""function (params) {
                                 return '▼' + params.value[2];
                                }
-                           """
-                ),
+                           """),
             ),
-            tooltip_opts=opts.TooltipOpts(
-                formatter=JsCode(
-                    """function (params) {
+            tooltip_opts=opts.TooltipOpts(formatter=JsCode("""function (params) {
                                 return params.value[0] +
                                        '<br>Price: ' + params.value[1] +
                                        '<br>Loss:  ' + params.value[2] +
                                        '<br>WE:    ' + params.value[3];
                                 }
-                           """
-                )
-            ),
+                           """)),
         )
         .set_global_opts(**scatters_global_options)
     )

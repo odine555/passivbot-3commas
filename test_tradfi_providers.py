@@ -181,12 +181,8 @@ async def main():
     parser.add_argument("--api-key", help="API key for provider")
     parser.add_argument("--api-secret", help="API secret (for Alpaca)")
     parser.add_argument("--symbol", default="TSLA", help="Stock symbol to test")
-    parser.add_argument(
-        "--depth-test", action="store_true", help="Test historical depth"
-    )
-    parser.add_argument(
-        "--multi-symbol", action="store_true", help="Test multiple symbols"
-    )
+    parser.add_argument("--depth-test", action="store_true", help="Test historical depth")
+    parser.add_argument("--multi-symbol", action="store_true", help="Test multiple symbols")
     args = parser.parse_args()
 
     # Load config

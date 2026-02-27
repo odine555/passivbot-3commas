@@ -410,9 +410,7 @@ def annotate_positions_inplace(
     Fetchers are responsible for computing correct PnL values during fetch.
     """
     if recompute_pnl:
-        logger.warning(
-            "annotate_positions_inplace: recompute_pnl=True is deprecated and ignored"
-        )
+        logger.warning("annotate_positions_inplace: recompute_pnl=True is deprecated and ignored")
     return compute_psize_pprice(events, state)
 
 
@@ -681,9 +679,11 @@ class FillEvent:
             raise ValueError(f"Fill event missing required keys: {missing}")
         return cls(
             id=str(data["id"]),
-            source_ids=_extract_source_ids(data.get("raw"), data.get("id"))
-            if not data.get("source_ids")
-            else [str(x) for x in data.get("source_ids") if x],
+            source_ids=(
+                _extract_source_ids(data.get("raw"), data.get("id"))
+                if not data.get("source_ids")
+                else [str(x) for x in data.get("source_ids") if x]
+            ),
             timestamp=int(data["timestamp"]),
             datetime=str(data.get("datetime") or ts_to_date(int(data["timestamp"]))),
             symbol=str(data["symbol"]),
@@ -834,9 +834,7 @@ class FillEventCache:
                 data.setdefault(key, default[key])
             self._metadata = data
         except Exception as exc:
-            logger.warning(
-                "[fills] cache metadata: failed to read %s (%s)", self.metadata_path, exc
-            )
+            logger.warning("[fills] cache metadata: failed to read %s (%s)", self.metadata_path, exc)
             self._metadata = default
 
         return self._metadata
@@ -2326,7 +2324,9 @@ class BybitFetcher(BaseFetcher):
         while True:
             fetch_count += 1
             if fetch_count > max_fetches:
-                logger.warning("BybitFetcher._fetch_positions_history: max fetches reached (%d)", max_fetches)
+                logger.warning(
+                    "BybitFetcher._fetch_positions_history: max fetches reached (%d)", max_fetches
+                )
                 break
 
             try:
@@ -2531,10 +2531,12 @@ class BybitFetcher(BaseFetcher):
 
                 # Append positions_history (closed-pnl) data to raw field
                 if order_id in raw_pnl_by_order:
-                    event["raw"].append({
-                        "source": "positions_history",
-                        "data": raw_pnl_by_order[order_id],
-                    })
+                    event["raw"].append(
+                        {
+                            "source": "positions_history",
+                            "data": raw_pnl_by_order[order_id],
+                        }
+                    )
 
             events.append(event)
 
@@ -3382,15 +3384,13 @@ class KucoinFetcher(BaseFetcher):
             last_delta = _pnl_discrepancy_last_delta.get(throttle_key)
             current_delta = local_total - remote_total
             # Log if: (1) delta changed significantly, or (2) throttle window expired
-            delta_changed = (
-                last_delta is None
-                or abs(current_delta - last_delta) > _PNL_DISCREPANCY_CHANGE_THRESHOLD * (abs(last_delta) + 1.0)
-            )
+            delta_changed = last_delta is None or abs(
+                current_delta - last_delta
+            ) > _PNL_DISCREPANCY_CHANGE_THRESHOLD * (abs(last_delta) + 1.0)
             time_since_last = now - last_log
             should_log = (
-                (delta_changed and time_since_last >= _PNL_DISCREPANCY_MIN_SECONDS)
-                or time_since_last >= _PNL_DISCREPANCY_THROTTLE_SECONDS
-            )
+                delta_changed and time_since_last >= _PNL_DISCREPANCY_MIN_SECONDS
+            ) or time_since_last >= _PNL_DISCREPANCY_THROTTLE_SECONDS
             if should_log:
                 _pnl_discrepancy_last_log[throttle_key] = now
                 _pnl_discrepancy_last_delta[throttle_key] = current_delta

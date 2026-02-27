@@ -55,7 +55,6 @@ from utils import (  # noqa: E402
 from metrics_schema import build_scenario_metrics, flatten_metric_stats  # noqa: E402
 from limit_utils import expand_limit_checks, compute_limit_violation  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # Constants mirroring optimizer scoring preferences
 # ---------------------------------------------------------------------------

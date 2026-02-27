@@ -10,8 +10,6 @@ if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
 
-
-
 def _install_passivbot_rust_stub():
     if "passivbot_rust" in sys.modules:
         return

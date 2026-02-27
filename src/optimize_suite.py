@@ -138,9 +138,7 @@ async def prepare_suite_contexts(
     base_config["backtest"]["coins"] = {}
     base_config["backtest"]["coin_sources"] = suite_coin_sources
 
-    candle_interval = int(
-        base_config.get("backtest", {}).get("candle_interval_minutes", 1) or 1
-    )
+    candle_interval = int(base_config.get("backtest", {}).get("candle_interval_minutes", 1) or 1)
     datasets = await prepare_master_datasets(
         base_config,
         base_exchanges,
