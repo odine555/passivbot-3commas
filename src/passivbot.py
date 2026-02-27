@@ -724,6 +724,8 @@ class Passivbot:
         # Realized-loss gate logging throttle
         self._loss_gate_last_log_ms = {}
         self._loss_gate_log_interval_ms = 5 * 60 * 1000  # 5 minutes
+        self._orchestrator_prev_close_ema = {}
+        self._orchestrator_close_ema_fallback_counts = {}
 
     def live_value(self, key: str):
         return require_live_value(self.config, key)
@@ -4397,6 +4399,10 @@ class Passivbot:
         m1_lr_spans = sorted(
             {s for s in (lr_span_long, lr_span_short) if s > 0.0 and math.isfinite(s)}
         )
+        if not hasattr(self, "_orchestrator_prev_close_ema"):
+            self._orchestrator_prev_close_ema = {}
+        if not hasattr(self, "_orchestrator_close_ema_fallback_counts"):
+            self._orchestrator_close_ema_fallback_counts = {}
 
         async def fetch_map(symbol: str, spans: list[float], fn):
             out: dict[float, float] = {}
@@ -4410,6 +4416,65 @@ class Passivbot:
                 val = float(res)
                 if math.isfinite(val):
                     out[float(sp)] = val
+            return out
+
+        async def fetch_close_map(symbol: str, spans: list[float]) -> dict[float, float]:
+            out: dict[float, float] = {}
+            if not spans:
+                return out
+            tasks = [asyncio.create_task(ema_close(symbol, sp)) for sp in spans]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            now_ms = int(utc_ms())
+            prev_by_span = self._orchestrator_prev_close_ema.setdefault(symbol, {})
+            missing: list[tuple[float, str]] = []
+            for sp, res in zip(spans, results):
+                span = float(sp)
+                key = (symbol, span)
+                reason = None
+                if isinstance(res, Exception):
+                    reason = f"{type(res).__name__}: {res}"
+                else:
+                    try:
+                        val = float(res)
+                    except Exception as e:
+                        reason = f"{type(e).__name__}: {e}"
+                    else:
+                        if math.isfinite(val):
+                            out[span] = val
+                            prev_by_span[span] = (val, now_ms)
+                            self._orchestrator_close_ema_fallback_counts[key] = 0
+                        else:
+                            reason = f"non-finite close EMA value {val}"
+                if reason is None:
+                    continue
+                prev = prev_by_span.get(span)
+                if prev is not None:
+                    prev_val = float(prev[0])
+                    prev_ts = int(prev[1])
+                    if math.isfinite(prev_val):
+                        out[span] = prev_val
+                        n_fallbacks = int(
+                            self._orchestrator_close_ema_fallback_counts.get(key, 0)
+                        ) + 1
+                        self._orchestrator_close_ema_fallback_counts[key] = n_fallbacks
+                        age_ms = max(0, now_ms - prev_ts)
+                        logging.warning(
+                            "[ema] close EMA fallback %s span=%.8g ema=%.12g age_ms=%d"
+                            " n_fallbacks=%d reason=%s",
+                            symbol,
+                            span,
+                            prev_val,
+                            age_ms,
+                            n_fallbacks,
+                            reason,
+                        )
+                        continue
+                missing.append((span, reason))
+            if missing:
+                detail = "; ".join([f"span={sp:.8g} reason={why}" for sp, why in missing])
+                raise RuntimeError(
+                    f"[ema] missing required close EMA for {symbol}; no previous EMA fallback available: {detail}"
+                )
             return out
 
         async def ema_close(symbol: str, span: float) -> float:
@@ -4429,7 +4494,7 @@ class Passivbot:
             )
 
         close_tasks = {
-            sym: asyncio.create_task(fetch_map(sym, sorted(need_close_spans[sym]), ema_close))
+            sym: asyncio.create_task(fetch_close_map(sym, sorted(need_close_spans[sym])))
             for sym in symbols
         }
         h1_lr_tasks = {
