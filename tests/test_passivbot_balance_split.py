@@ -263,7 +263,9 @@ def test_unstuck_allowance_routes_raw_balance_to_rust(monkeypatch):
 
     calls = []
 
-    def fake_calc_auto_unstuck_allowance(balance, loss_allowance_pct, pnl_cumsum_max, pnl_cumsum_last):
+    def fake_calc_auto_unstuck_allowance(
+        balance, loss_allowance_pct, pnl_cumsum_max, pnl_cumsum_last
+    ):
         calls.append((balance, loss_allowance_pct, pnl_cumsum_max, pnl_cumsum_last))
         return 123.45
 

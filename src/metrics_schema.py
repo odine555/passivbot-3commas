@@ -6,7 +6,6 @@ from typing import Any, Dict, Iterable, Mapping
 
 import numpy as np
 
-
 MetricStats = Dict[str, float]
 ScenarioMetrics = Dict[str, Dict[str, MetricStats]]
 

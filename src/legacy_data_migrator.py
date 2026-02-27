@@ -23,7 +23,6 @@ from typing import Dict, List, Optional, Set, Tuple
 import numpy as np
 import sys
 
-
 # Windows compatibility check (same logic as candlestick_manager.py)
 # See: https://github.com/enarjord/passivbot/issues/547
 windows_compatibility = (
@@ -43,6 +42,7 @@ def _sanitize_symbol(symbol: str) -> str:
     if windows_compatibility:
         sanitized = sanitized.replace(":", "_")
     return sanitized
+
 
 # Mapping from ccxt exchange IDs to standard (short) names.
 # Only include entries where the ccxt ID differs from the standard name.
@@ -122,30 +122,18 @@ def standardize_cache_directories(cache_base: str = "caches/ohlcv", dry_run: boo
         if standard_path.exists() and not standard_path.is_symlink():
             # Both exist - need to merge
             if dry_run:
-                logging.info(
-                    "[dry-run] Would merge %s into %s",
-                    ccxt_path, standard_path
-                )
+                logging.info("[dry-run] Would merge %s into %s", ccxt_path, standard_path)
             else:
-                logging.info(
-                    "Merging cache directory %s into %s",
-                    ccxt_path, standard_path
-                )
+                logging.info("Merging cache directory %s into %s", ccxt_path, standard_path)
                 _merge_cache_directories(ccxt_path, standard_path)
                 shutil.rmtree(ccxt_path)
             changes += 1
         else:
             # Simple rename
             if dry_run:
-                logging.info(
-                    "[dry-run] Would rename %s to %s",
-                    ccxt_path, standard_path
-                )
+                logging.info("[dry-run] Would rename %s to %s", ccxt_path, standard_path)
             else:
-                logging.info(
-                    "Renaming cache directory %s to %s",
-                    ccxt_path, standard_path
-                )
+                logging.info("Renaming cache directory %s to %s", ccxt_path, standard_path)
                 ccxt_path.rename(standard_path)
             changes += 1
 
@@ -277,14 +265,10 @@ def merge_duplicate_symbol_directories(
                     correct_dir = source_dir.parent / correct_name
 
                     if dry_run:
-                        logging.info(
-                            "[dry-run] Would rename %s to %s",
-                            source_dir, correct_dir
-                        )
+                        logging.info("[dry-run] Would rename %s to %s", source_dir, correct_dir)
                     else:
                         logging.info(
-                            "[boot] Renaming symbol directory %s to %s",
-                            source_dir.name, correct_name
+                            "[boot] Renaming symbol directory %s to %s", source_dir.name, correct_name
                         )
                         source_dir.rename(correct_dir)
                     merged_count += 1
@@ -296,13 +280,13 @@ def merge_duplicate_symbol_directories(
 
                     if dry_run:
                         logging.info(
-                            "[dry-run] Would merge %s into %s and delete",
-                            wrong_dir, correct_dir
+                            "[dry-run] Would merge %s into %s and delete", wrong_dir, correct_dir
                         )
                     else:
                         logging.info(
                             "[boot] Merging duplicate symbol directory %s into %s",
-                            wrong_dir.name, correct_dir.name
+                            wrong_dir.name,
+                            correct_dir.name,
                         )
                         _merge_cache_directories(wrong_dir, correct_dir)
                         shutil.rmtree(wrong_dir)
@@ -311,9 +295,7 @@ def merge_duplicate_symbol_directories(
     return merged_count
 
 
-def normalize_ccxt_volume_to_base(
-    exchange_id: str, close: float, volume: float
-) -> float:
+def normalize_ccxt_volume_to_base(exchange_id: str, close: float, volume: float) -> float:
     """
     Normalize ccxt OHLCV volume to base volume.
 
@@ -324,6 +306,7 @@ def normalize_ccxt_volume_to_base(
     if exid == "gateio" and close > 0:
         return float(volume) / float(close)
     return float(volume)
+
 
 def _convert_to_canonical_symbol_path(dir_name: str) -> str:
     """
@@ -347,7 +330,7 @@ def _convert_to_canonical_symbol_path(dir_name: str) -> str:
     for quote in ["USDT", "USDC"]:
         suffix = f"_{quote}_{quote}"
         if dir_name.endswith(suffix):
-            base = dir_name[:-len(suffix)]
+            base = dir_name[: -len(suffix)]
             return f"{base}_{quote}:{quote}"
 
     # Fallback: no change if pattern doesn't match
@@ -477,7 +460,12 @@ def migrate_legacy_data_for_exchange(
                 pct = int(100 * processed / total_shards) if total_shards > 0 else 0
                 logging.info(
                     "[boot] Migration progress for %s: %d%% (%d/%d shards, %d migrated, %d skipped)",
-                    exchange, pct, processed, total_shards, migrated, skipped
+                    exchange,
+                    pct,
+                    processed,
+                    total_shards,
+                    migrated,
+                    skipped,
                 )
                 last_log_time = now
             # Build target path
@@ -488,9 +476,7 @@ def migrate_legacy_data_for_exchange(
                 continue
 
             # Find source file(s)
-            source_paths = _find_legacy_source_paths(
-                exchange, coin, date_str, historical_data_path
-            )
+            source_paths = _find_legacy_source_paths(exchange, coin, date_str, historical_data_path)
 
             if not source_paths:
                 continue
@@ -514,7 +500,10 @@ def migrate_legacy_data_for_exchange(
             if dry_run:
                 logging.info(
                     "[dry-run] Would migrate %s/%s/%s (%d candles)",
-                    exchange, coin, date_str, len(source_data)
+                    exchange,
+                    coin,
+                    date_str,
+                    len(source_data),
                 )
             else:
                 target_path.parent.mkdir(parents=True, exist_ok=True)
@@ -524,8 +513,7 @@ def migrate_legacy_data_for_exchange(
                 np.save(tmp_path, source_data)
                 tmp_path.rename(target_path)
                 logging.debug(
-                    "Migrated %s/%s/%s (%d candles)",
-                    exchange, coin, date_str, len(source_data)
+                    "Migrated %s/%s/%s (%d candles)", exchange, coin, date_str, len(source_data)
                 )
 
             migrated += 1

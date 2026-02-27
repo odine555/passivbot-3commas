@@ -75,14 +75,14 @@ async def test_market_settings_sources_decouples_ohlcv_from_settings():
     eth_mss = mss["ETH"]
 
     # Verify market settings come from hyperliquid
-    assert eth_mss["exchange"] == "hyperliquid", (
-        f"Expected exchange='hyperliquid', got '{eth_mss.get('exchange')}'"
-    )
+    assert (
+        eth_mss["exchange"] == "hyperliquid"
+    ), f"Expected exchange='hyperliquid', got '{eth_mss.get('exchange')}'"
 
     # Verify ohlcv_source is set to binance (since it differs from exchange)
-    assert eth_mss.get("ohlcv_source") == "binance", (
-        f"Expected ohlcv_source='binance', got '{eth_mss.get('ohlcv_source')}'"
-    )
+    assert (
+        eth_mss.get("ohlcv_source") == "binance"
+    ), f"Expected ohlcv_source='binance', got '{eth_mss.get('ohlcv_source')}'"
 
     # Verify we got actual OHLCV data
     assert hlcvs.shape[0] > 0, "Should have OHLCV data"
@@ -150,14 +150,14 @@ async def test_no_market_settings_sources_uses_ohlcv_source():
     eth_mss = mss["ETH"]
 
     # Should use binance for market settings (same as OHLCV source)
-    assert eth_mss["exchange"] == "binance", (
-        f"Expected exchange='binance', got '{eth_mss.get('exchange')}'"
-    )
+    assert (
+        eth_mss["exchange"] == "binance"
+    ), f"Expected exchange='binance', got '{eth_mss.get('exchange')}'"
 
     # ohlcv_source should NOT be set when sources are the same
-    assert "ohlcv_source" not in eth_mss, (
-        f"ohlcv_source should not be set when same as exchange, got '{eth_mss.get('ohlcv_source')}'"
-    )
+    assert (
+        "ohlcv_source" not in eth_mss
+    ), f"ohlcv_source should not be set when same as exchange, got '{eth_mss.get('ohlcv_source')}'"
 
 
 @pytest.mark.asyncio

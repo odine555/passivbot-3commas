@@ -689,7 +689,9 @@ def test_twel_enforcer_uses_balance_raw_not_snapped():
     # With snapped balance 2000: total WE = 1000/2000 = 0.5 (under 0.9, no trigger).
     # With raw balance 1100: total WE = 1000/1100 ≈ 0.909 (over 0.9, triggers).
     sym0 = make_symbol(0, bid=50.0, ask=50.0, long_pos_size=8.0, long_pos_price=50.0, long_bp=long_bp)
-    sym1 = make_symbol(1, bid=50.0, ask=50.0, long_pos_size=12.0, long_pos_price=50.0, long_bp=long_bp)
+    sym1 = make_symbol(
+        1, bid=50.0, ask=50.0, long_pos_size=12.0, long_pos_price=50.0, long_bp=long_bp
+    )
     inp = make_input(balance=2_000.0, global_bp=global_bp, symbols=[sym0, sym1])
     inp["balance_raw"] = 1_100.0
 

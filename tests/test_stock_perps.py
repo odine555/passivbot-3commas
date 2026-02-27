@@ -371,12 +371,16 @@ class TestMinIsolatedLeverage:
 
         for twel, expected_min_lev in test_cases:
             min_leverage = max(1, math.ceil(twel))
-            assert min_leverage == expected_min_lev, f"TWEL {twel} should need {expected_min_lev}x leverage"
+            assert (
+                min_leverage == expected_min_lev
+            ), f"TWEL {twel} should need {expected_min_lev}x leverage"
 
             # Verify margin requirement <= balance
             max_exposure = twel * balance
             margin_required = max_exposure / min_leverage
-            assert margin_required <= balance, f"TWEL {twel} with {min_leverage}x: margin {margin_required} > balance {balance}"
+            assert (
+                margin_required <= balance
+            ), f"TWEL {twel} with {min_leverage}x: margin {margin_required} > balance {balance}"
 
 
 class TestAvailableStockPerps:

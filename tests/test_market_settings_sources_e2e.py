@@ -56,8 +56,8 @@ async def run_test():
     logging.info("=" * 60)
 
     # This is the main backtest preparation function
-    coins, hlcvs, mss, results_path, cache_dir, btc_usd_prices, timestamps = (
-        await prepare_hlcvs_mss(cfg, "combined")
+    coins, hlcvs, mss, results_path, cache_dir, btc_usd_prices, timestamps = await prepare_hlcvs_mss(
+        cfg, "combined"
     )
 
     logging.info(f"Coins loaded: {coins}")

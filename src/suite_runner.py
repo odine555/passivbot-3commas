@@ -42,7 +42,6 @@ from ohlcv_utils import align_and_aggregate_hlcvs
 from shared_arrays import SharedArraySpec
 from metrics_schema import flatten_metric_stats, merge_suite_payload
 
-
 # --------------------------------------------------------------------------- #
 # Data containers
 # --------------------------------------------------------------------------- #
@@ -158,8 +157,7 @@ def filter_scenarios_by_label(
     if not filtered:
         available = [s.get("label", f"<unnamed_{i}>") for i, s in enumerate(scenarios)]
         raise ValueError(
-            f"No scenarios match the requested labels {labels}. "
-            f"Available labels: {available}"
+            f"No scenarios match the requested labels {labels}. " f"Available labels: {available}"
         )
 
     return filtered
@@ -443,7 +441,10 @@ def _apply_candle_aggregation(hlcvs, timestamps, btc_usd_prices, mss, interval):
     )
     logging.debug(
         "[suite] aggregated %dm candles: %d bars -> %d bars (trimmed %d for alignment)",
-        interval, n_before, hlcvs.shape[0], offset_bars,
+        interval,
+        n_before,
+        hlcvs.shape[0],
+        offset_bars,
     )
     meta = mss.setdefault("__meta__", {})
     meta["data_interval_minutes"] = int(interval)
@@ -911,8 +912,7 @@ async def run_backtest_scenario(
         # Use per-exchange datasets for scenarios with exchange restrictions
         # Filter datasets to only include those requested by the scenario
         filtered_datasets = {
-            k: v for k, v in datasets.items()
-            if k != "combined" and k in scenario_exchanges
+            k: v for k, v in datasets.items() if k != "combined" and k in scenario_exchanges
         }
         if not filtered_datasets:
             raise ValueError(
@@ -1450,9 +1450,7 @@ async def run_backtest_suite_async(
     else:
         base_config["live"]["ignored_coins"] = list(master_ignored)
 
-    candle_interval = int(
-        base_config.get("backtest", {}).get("candle_interval_minutes", 1) or 1
-    )
+    candle_interval = int(base_config.get("backtest", {}).get("candle_interval_minutes", 1) or 1)
     datasets = await prepare_master_datasets(
         base_config,
         exchanges_list,

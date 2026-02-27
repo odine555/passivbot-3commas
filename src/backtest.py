@@ -371,7 +371,10 @@ def build_backtest_payload(
         )
         logging.debug(
             "[backtest] aggregated %dm candles: %d bars -> %d bars (trimmed %d for alignment)",
-            candle_interval, n_before, hlcvs.shape[0], offset_bars,
+            candle_interval,
+            n_before,
+            hlcvs.shape[0],
+            offset_bars,
         )
         if isinstance(mss, dict):
             meta = mss.setdefault("__meta__", {})
@@ -434,9 +437,7 @@ def build_backtest_payload(
         warm = int(meta.get("warmup_minutes", warmup_map.get(coin, default_warm)))
         warmup_minutes.append(warm)
         # trade_start_idx is in candle units, adjust warm from minutes to candle periods
-        warm_bars = (
-            int(math.ceil(warm / candle_interval)) if candle_interval > 1 else int(warm)
-        )
+        warm_bars = int(math.ceil(warm / candle_interval)) if candle_interval > 1 else int(warm)
         if first_idx > last_idx:
             trade_idx = first_idx
         else:
@@ -468,9 +469,7 @@ def build_backtest_payload(
     if isinstance(meta, dict) and timestamps is not None and len(timestamps) > 0:
         meta["effective_start_ts"] = int(timestamps[0])
         meta["effective_start_date"] = ts_to_date(int(timestamps[0]))
-        warmup_provided = max(
-            0, int(max(0, requested_start_ts - int(timestamps[0])) // 60_000)
-        )
+        warmup_provided = max(0, int(max(0, requested_start_ts - int(timestamps[0])) // 60_000))
         meta["warmup_minutes_provided"] = warmup_provided
 
     bundle = _build_hlcvs_bundle(
@@ -672,9 +671,7 @@ def process_forager_fills(
         pnls[pside] = profit + loss
         analysis_appendix[f"loss_profit_ratio_{pside}"] = abs(loss / profit) if profit != 0.0 else 1.0
     pnl_sum = pnls["long"] + pnls["short"]
-    analysis_appendix["pnl_ratio_long_short"] = (
-        pnls["long"] / pnl_sum if pnl_sum != 0.0 else 0.5
-    )
+    analysis_appendix["pnl_ratio_long_short"] = pnls["long"] / pnl_sum if pnl_sum != 0.0 else 0.5
     sample_divider = max(1, int(balance_sample_divider))
     if not fdf.empty:
         timestamps_ns = fdf["timestamp"].astype("int64")
@@ -1278,9 +1275,11 @@ def post_process(
     twe_figs = create_forager_twe_figure(fdf, autoplot=False, return_figures=True)
     save_figures(twe_figs, results_path)
     pnl_figs = create_forager_pnl_figure(
-        fdf, bal_eq,
+        fdf,
+        bal_eq,
         balance_sample_divider=balance_sample_divider,
-        autoplot=False, return_figures=True,
+        autoplot=False,
+        return_figures=True,
     )
     save_figures(pnl_figs, results_path)
 

@@ -3,7 +3,6 @@ import time
 import os
 import pytest
 
-
 LIVE = os.getenv("LIVE_CANDLE_TESTS", "0") == "1"
 
 pytestmark = pytest.mark.skipif(not LIVE, reason="Set LIVE_CANDLE_TESTS=1 to enable live ccxt tests")

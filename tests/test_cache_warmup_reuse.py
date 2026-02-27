@@ -33,7 +33,6 @@ from backtest import (
     save_coins_hlcvs_to_cache,
 )
 
-
 # ============================================================================
 # Fixtures
 # ============================================================================
@@ -305,7 +304,13 @@ class TestSavePersistsWarmupMetadata:
         timestamps = np.arange(10, dtype=np.int64) * 60_000
 
         cache_dir = save_coins_hlcvs_to_cache(
-            cfg, coins, hlcvs, "binance", mss, btc_usd, timestamps,
+            cfg,
+            coins,
+            hlcvs,
+            "binance",
+            mss,
+            btc_usd,
+            timestamps,
             warmup_minutes=12345,
         )
 
@@ -328,7 +333,13 @@ class TestSavePersistsWarmupMetadata:
 
         # First save with warmup=1000
         cache_dir = save_coins_hlcvs_to_cache(
-            cfg, coins, hlcvs, "binance", mss, btc_usd, timestamps,
+            cfg,
+            coins,
+            hlcvs,
+            "binance",
+            mss,
+            btc_usd,
+            timestamps,
             warmup_minutes=1000,
         )
         meta = json.load(open(os.path.join(str(cache_dir), "cache_meta.json")))
@@ -339,7 +350,13 @@ class TestSavePersistsWarmupMetadata:
         btc_bigger = np.ones(20, dtype=np.float64)
         ts_bigger = np.arange(20, dtype=np.int64) * 60_000
         cache_dir2 = save_coins_hlcvs_to_cache(
-            cfg, coins, hlcvs_bigger, "binance", mss, btc_bigger, ts_bigger,
+            cfg,
+            coins,
+            hlcvs_bigger,
+            "binance",
+            mss,
+            btc_bigger,
+            ts_bigger,
             warmup_minutes=5000,
         )
 
@@ -359,11 +376,23 @@ class TestSavePersistsWarmupMetadata:
         timestamps = np.arange(10, dtype=np.int64) * 60_000
 
         cache_dir = save_coins_hlcvs_to_cache(
-            cfg, coins, hlcvs, "binance", mss, btc_usd, timestamps,
+            cfg,
+            coins,
+            hlcvs,
+            "binance",
+            mss,
+            btc_usd,
+            timestamps,
             warmup_minutes=5000,
         )
         save_coins_hlcvs_to_cache(
-            cfg, coins, hlcvs, "binance", mss, btc_usd, timestamps,
+            cfg,
+            coins,
+            hlcvs,
+            "binance",
+            mss,
+            btc_usd,
+            timestamps,
             warmup_minutes=1000,
         )
 
@@ -383,7 +412,13 @@ class TestSavePersistsWarmupMetadata:
         timestamps = np.arange(10, dtype=np.int64) * 60_000
 
         cache_dir = save_coins_hlcvs_to_cache(
-            cfg, coins, hlcvs, "binance", mss, btc_usd, timestamps,
+            cfg,
+            coins,
+            hlcvs,
+            "binance",
+            mss,
+            btc_usd,
+            timestamps,
             warmup_minutes=9999,
         )
 
@@ -422,7 +457,13 @@ class TestRatchetUpEndToEnd:
 
         # Step 1: Save with warmup=3000
         save_coins_hlcvs_to_cache(
-            cfg, coins, hlcvs, "binance", mss, btc_usd, timestamps,
+            cfg,
+            coins,
+            hlcvs,
+            "binance",
+            mss,
+            btc_usd,
+            timestamps,
             warmup_minutes=3000,
         )
 
@@ -439,7 +480,13 @@ class TestRatchetUpEndToEnd:
         btc_bigger = np.ones(20, dtype=np.float64)
         ts_bigger = np.arange(20, dtype=np.int64) * 60_000
         save_coins_hlcvs_to_cache(
-            cfg, coins, hlcvs_bigger, "binance", mss, btc_bigger, ts_bigger,
+            cfg,
+            coins,
+            hlcvs_bigger,
+            "binance",
+            mss,
+            btc_bigger,
+            ts_bigger,
             warmup_minutes=5000,
         )
 
@@ -463,7 +510,13 @@ class TestRatchetUpEndToEnd:
         timestamps = np.arange(10000, dtype=np.int64) * 60_000
 
         save_coins_hlcvs_to_cache(
-            cfg, coins, hlcvs, "binance", mss, btc_usd, timestamps,
+            cfg,
+            coins,
+            hlcvs,
+            "binance",
+            mss,
+            btc_usd,
+            timestamps,
             warmup_minutes=5000,
         )
         result = load_coins_hlcvs_from_cache(cfg, "binance", warmup_minutes=3000)

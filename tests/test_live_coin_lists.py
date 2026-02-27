@@ -32,8 +32,6 @@ def test_add_to_coins_lists_skips_symbols_not_in_eligible_markets(caplog):
     assert bot.approved_coins["long"] == {"AAA/USDT:USDT"}
     assert bot.approved_coins["short"] == set()
     warnings = [
-        rec.message
-        for rec in caplog.records
-        if "skipping unsupported markets" in rec.message.lower()
+        rec.message for rec in caplog.records if "skipping unsupported markets" in rec.message.lower()
     ]
     assert len(warnings) == 1

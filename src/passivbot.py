@@ -96,7 +96,6 @@ from custom_endpoint_overrides import (
     resolve_custom_endpoint_override,
 )
 
-
 calc_min_entry_qty = pbr.calc_min_entry_qty_py
 round_ = pbr.round_
 round_up = pbr.round_up
@@ -412,17 +411,13 @@ def compute_live_warmup_windows(
                 _get_bp(pside, "ema_span_0", sym),
                 _get_bp(pside, "ema_span_1", sym),
             )
-            if (pside == "long" and is_forager_long) or (
-                pside == "short" and is_forager_short
-            ):
+            if (pside == "long" and is_forager_long) or (pside == "short" and is_forager_short):
                 max_1m_span = max(
                     max_1m_span,
                     _get_bp(pside, "filter_volume_ema_span", sym),
                     _get_bp(pside, "filter_volatility_ema_span", sym),
                 )
-            max_h1_span = max(
-                max_h1_span, _get_bp(pside, "entry_volatility_ema_span_hours", sym)
-            )
+            max_h1_span = max(max_h1_span, _get_bp(pside, "entry_volatility_ema_span_hours", sym))
 
         if max_1m_span > 0.0:
             win = int(math.ceil(max_1m_span * span_buffer))
@@ -545,7 +540,11 @@ class Passivbot:
         self.start_time_ms = utc_ms()
         # CandlestickManager settings from config.live
         # Use denormalized exchange name for cache paths (e.g., "binance" not "binanceusdm")
-        cm_kwargs = {"exchange": self.cca, "exchange_name": self.exchange, "debug": self.logging_level}
+        cm_kwargs = {
+            "exchange": self.cca,
+            "exchange_name": self.exchange,
+            "debug": self.logging_level,
+        }
         mem_cap_raw = require_live_value(config, "max_memory_candles_per_symbol")
         mem_cap_effective = DEFAULT_MAX_MEMORY_CANDLES_PER_SYMBOL
         try:
@@ -587,9 +586,7 @@ class Passivbot:
                     "Unable to parse live.max_concurrent_api_requests=%r; ignoring",
                     max_concurrent,
                 )
-        raw_page_debug = get_optional_config_value(
-            config, "logging.candle_page_debug_symbols", None
-        )
+        raw_page_debug = get_optional_config_value(config, "logging.candle_page_debug_symbols", None)
         page_debug_symbols = []
         if raw_page_debug not in (None, "", []):
             if isinstance(raw_page_debug, str):
@@ -969,15 +966,9 @@ class Passivbot:
         await self.start_data_maintainers()
 
         logging.info("[boot] starting execution loop...")
-        logging.info(
-            "[boot] ══════════════════════════════════════════════════════════════════════"
-        )
-        logging.info(
-            "[boot] READY - Bot initialization complete, entering main trading loop"
-        )
-        logging.info(
-            "[boot] ══════════════════════════════════════════════════════════════════════"
-        )
+        logging.info("[boot] ══════════════════════════════════════════════════════════════════════")
+        logging.info("[boot] READY - Bot initialization complete, entering main trading loop")
+        logging.info("[boot] ══════════════════════════════════════════════════════════════════════")
         if not self.debug_mode:
             await self.run_execution_loop()
 
@@ -1056,7 +1047,8 @@ class Passivbot:
                 # Check if there's an initial entry order for this symbol/pside
                 symbol_orders = ideal_orders.get(symbol, [])
                 has_initial_entry = any(
-                    f"entry_initial" in (o[2] if len(o) > 2 else "") and pside in (o[2] if len(o) > 2 else "")
+                    f"entry_initial" in (o[2] if len(o) > 2 else "")
+                    and pside in (o[2] if len(o) > 2 else "")
                     for o in symbol_orders
                 )
                 if has_initial_entry:
@@ -1091,11 +1083,19 @@ class Passivbot:
                     if pside == "long":
                         ema_entry_price = ema_lower * (1.0 - ema_dist)
                         is_gated = current_price > ema_entry_price
-                        dist_pct = (current_price / ema_entry_price - 1.0) * 100 if ema_entry_price > 0 else 0
+                        dist_pct = (
+                            (current_price / ema_entry_price - 1.0) * 100
+                            if ema_entry_price > 0
+                            else 0
+                        )
                     else:  # short
                         ema_entry_price = ema_upper * (1.0 + ema_dist)
                         is_gated = current_price < ema_entry_price
-                        dist_pct = (1.0 - current_price / ema_entry_price) * 100 if ema_entry_price > 0 else 0
+                        dist_pct = (
+                            (1.0 - current_price / ema_entry_price) * 100
+                            if ema_entry_price > 0
+                            else 0
+                        )
 
                     if is_gated and abs(dist_pct) > 0.1:  # Only log if meaningfully gated
                         throttle_key = f"{symbol}:{pside}"
@@ -1107,7 +1107,11 @@ class Passivbot:
                         coin = symbol.split("/")[0] if "/" in symbol else symbol
                         logging.info(
                             "[ema] %s %s entry gated | price=%.4g ema_thresh=%.4g (+%.1f%% away)",
-                            coin, pside, current_price, ema_entry_price, dist_pct
+                            coin,
+                            pside,
+                            current_price,
+                            ema_entry_price,
+                            dist_pct,
                         )
                 except Exception:
                     pass  # Silently skip on any calculation errors
@@ -1422,13 +1426,9 @@ class Passivbot:
                     await asyncio.sleep(sleep_chunk)
                     waited += sleep_chunk
                     if waited < jitter:
-                        logging.info(
-                            "[boot] warmup jitter: %.0fs remaining...", jitter - waited
-                        )
+                        logging.info("[boot] warmup jitter: %.0fs remaining...", jitter - waited)
             else:
-                logging.info(
-                    "[boot] warmup jitter: sleeping %.1fs (max=%.0fs)", jitter, max_jitter
-                )
+                logging.info("[boot] warmup jitter: sleeping %.1fs (max=%.0fs)", jitter, max_jitter)
                 await asyncio.sleep(jitter)
 
         n = len(symbols)
@@ -1442,21 +1442,21 @@ class Passivbot:
         except Exception:
             warmup_ratio = 0.0
         try:
-            max_warmup_minutes = int(get_optional_live_value(self.config, "max_warmup_minutes", 0) or 0)
+            max_warmup_minutes = int(
+                get_optional_live_value(self.config, "max_warmup_minutes", 0) or 0
+            )
         except Exception:
             max_warmup_minutes = 0
         large_span_threshold = 2 * 24 * 60  # minutes; match CandlestickManager large-span logic
 
-        per_symbol_win, per_symbol_h1_hours, per_symbol_skip_historical = (
-            compute_live_warmup_windows(
-                symbols_by_side,
-                lambda pside, key, sym: self.bp(pside, key, sym),
-                forager_enabled=forager_needed,
-                window_candles=window_candles,
-                warmup_ratio=warmup_ratio,
-                max_warmup_minutes=max_warmup_minutes,
-                large_span_threshold=large_span_threshold,
-            )
+        per_symbol_win, per_symbol_h1_hours, per_symbol_skip_historical = compute_live_warmup_windows(
+            symbols_by_side,
+            lambda pside, key, sym: self.bp(pside, key, sym),
+            forager_enabled=forager_needed,
+            window_candles=window_candles,
+            warmup_ratio=warmup_ratio,
+            max_warmup_minutes=max_warmup_minutes,
+            large_span_threshold=large_span_threshold,
         )
         end_final_hour = (now // (60 * ONE_MIN_MS)) * (60 * ONE_MIN_MS) - 60 * ONE_MIN_MS
         try:
@@ -1569,6 +1569,7 @@ class Passivbot:
 
         # Warm 1h candles for grid log-range EMAs
         hour_sem = asyncio.Semaphore(max(1, int(concurrency)))
+
         async def warm_hour(sym: str):
             async with hour_sem:
                 warm_hours = int(per_symbol_h1_hours.get(sym, 0) or 0)
@@ -1741,7 +1742,9 @@ class Passivbot:
         except Exception:
             warmup_ratio = 0.0
         try:
-            max_warmup_minutes = int(get_optional_live_value(self.config, "max_warmup_minutes", 0) or 0)
+            max_warmup_minutes = int(
+                get_optional_live_value(self.config, "max_warmup_minutes", 0) or 0
+            )
         except Exception:
             max_warmup_minutes = 0
 
@@ -1987,7 +1990,9 @@ class Passivbot:
             if to_create:
                 print(f"would create {len(to_create)} order{'s' if len(to_create) > 1 else ''}")
         elif self.get_raw_balance() < self.balance_threshold:
-            logging.info("[balance] too low: %.2f %s; not creating orders", self.get_raw_balance(), self.quote)
+            logging.info(
+                "[balance] too low: %.2f %s; not creating orders", self.get_raw_balance(), self.quote
+            )
         else:
             # to_create_mod = [x for x in to_create if not order_has_match(x, to_cancel)]
             to_create_mod = []
@@ -2718,7 +2723,9 @@ class Passivbot:
                             # Forager selection - always useful
                             should_log_info = True
                             if pside_info["open"]:
-                                info_suffix = f" (forager slot {pside_info['current']+1}/{pside_info['max']})"
+                                info_suffix = (
+                                    f" (forager slot {pside_info['current']+1}/{pside_info['max']})"
+                                )
                             else:
                                 info_suffix = f" (slot {pside_info['current']}/{pside_info['max']})"
                         elif is_first_run:
@@ -2733,8 +2740,7 @@ class Passivbot:
                     elif change_type == "changed":
                         # Mode changed - check if it's oscillation or significant
                         is_oscillation = (
-                            "normal -> graceful_stop" in elm
-                            or "graceful_stop -> normal" in elm
+                            "normal -> graceful_stop" in elm or "graceful_stop -> normal" in elm
                         )
                         if is_oscillation:
                             # Oscillation - suppress at INFO (already logged at DEBUG)
@@ -2797,9 +2803,7 @@ class Passivbot:
             if slots_open:
                 max_age_ms = 60_000
             else:
-                max_calls = get_optional_live_value(
-                    self.config, "max_ohlcv_fetches_per_minute", 0
-                )
+                max_calls = get_optional_live_value(self.config, "max_ohlcv_fetches_per_minute", 0)
                 try:
                     max_calls = int(max_calls) if max_calls is not None else 0
                 except Exception:
@@ -2865,7 +2869,9 @@ class Passivbot:
         except Exception:
             warmup_ratio = 0.0
         try:
-            max_warmup_minutes = int(get_optional_live_value(self.config, "max_warmup_minutes", 0) or 0)
+            max_warmup_minutes = int(
+                get_optional_live_value(self.config, "max_warmup_minutes", 0) or 0
+            )
         except Exception:
             max_warmup_minutes = 0
         span_buffer = 1.0 + max(0.0, warmup_ratio)
@@ -2920,7 +2926,9 @@ class Passivbot:
         # Log only when rankings have changed since last logged snapshot.
         elapsed_s = max(0.001, (utc_ms() - started_ms) / 1000.0)
         now_ms = utc_ms()
-        ema_log_throttle_ms = 300_000  # 5 minutes between logs per metric (reduced from 60s to reduce forager noise)
+        ema_log_throttle_ms = (
+            300_000  # 5 minutes between logs per metric (reduced from 60s to reduce forager noise)
+        )
 
         if volumes:
             top_n = min(8, len(volumes))
@@ -3056,7 +3064,9 @@ class Passivbot:
         allowance_multiplier = 1.0 + max(0.0, allowance_pct)
         effective_limit = base_limit * allowance_multiplier
         return (
-            self.get_hysteresis_snapped_balance() * effective_limit * self.bp(pside, "entry_initial_qty_pct", symbol)
+            self.get_hysteresis_snapped_balance()
+            * effective_limit
+            * self.bp(pside, "entry_initial_qty_pct", symbol)
             >= self.effective_min_cost[symbol]
         )
 
@@ -3232,7 +3242,9 @@ class Passivbot:
             if needs_full_refresh:
                 # Full refresh with proper lookback window
                 if not getattr(self, "_fills_full_refresh_logged", False):
-                    logging.debug("[fills] Performing full refresh from %s", ts_to_date(age_limit)[:19])
+                    logging.debug(
+                        "[fills] Performing full refresh from %s", ts_to_date(age_limit)[:19]
+                    )
                 await self._pnls_manager.refresh(start_ms=int(age_limit), end_ms=None)
             else:
                 # Incremental refresh
@@ -3585,7 +3597,9 @@ class Passivbot:
         lookback_ms = max(lookback_days, 0.0) * 24 * 60 * 60 * 1000
         lookback_start = ts_now - lookback_ms
 
-        balance_now = float(current_balance) if current_balance is not None else self.get_raw_balance()
+        balance_now = (
+            float(current_balance) if current_balance is not None else self.get_raw_balance()
+        )
         balance_now = max(balance_now, 0.0)
         total_realised = sum(
             evt["pnl"] + evt.get("fee", 0.0) for evt in events if evt["timestamp"] <= ts_now
@@ -4323,7 +4337,13 @@ class Passivbot:
                     allowance = unstuck_allowances.get(pside, 0.0)
                     logging.info(
                         "[unstuck] selecting %s %s | entry=%.2f now=%.2f (%s%.1f%%) | allowance=%.2f",
-                        coin, pside, entry_price, current_price, sign, price_diff_pct, allowance
+                        coin,
+                        pside,
+                        entry_price,
+                        current_price,
+                        sign,
+                        price_diff_pct,
+                        allowance,
                     )
                 break  # Only one unstuck order per cycle
 
@@ -4641,7 +4661,13 @@ class Passivbot:
                     allowance = unstuck_allowances.get(pside, 0.0)
                     logging.info(
                         "[unstuck] selecting %s %s | entry=%.2f now=%.2f (%s%.1f%%) | allowance=%.2f",
-                        coin, pside, entry_price, current_price, sign, price_diff_pct, allowance
+                        coin,
+                        pside,
+                        entry_price,
+                        current_price,
+                        sign,
+                        price_diff_pct,
+                        allowance,
                     )
                 break  # Only one unstuck order per cycle
 
@@ -5345,8 +5371,10 @@ class Passivbot:
         if not candidates:
             return
 
-        target_age_ms = 60_000 if slots_open_any else self._forager_target_staleness_ms(
-            len(all_candidates), max_calls
+        target_age_ms = (
+            60_000
+            if slots_open_any
+            else self._forager_target_staleness_ms(len(all_candidates), max_calls)
         )
         now = utc_ms()
         stale: List[Tuple[float, str]] = []
@@ -5398,7 +5426,9 @@ class Passivbot:
         except Exception:
             warmup_ratio = 0.0
         try:
-            max_warmup_minutes = int(get_optional_live_value(self.config, "max_warmup_minutes", 0) or 0)
+            max_warmup_minutes = int(
+                get_optional_live_value(self.config, "max_warmup_minutes", 0) or 0
+            )
         except Exception:
             max_warmup_minutes = 0
         span_buffer = 1.0 + max(0.0, warmup_ratio)
@@ -5446,9 +5476,7 @@ class Passivbot:
                     exc,
                 )
             except Exception as exc:
-                logging.error(
-                    "error refreshing forager candles for %s: %s", sym, exc, exc_info=True
-                )
+                logging.error("error refreshing forager candles for %s: %s", sym, exc, exc_info=True)
 
     async def update_ohlcvs_1m_for_actives(self):
         """Ensure active symbols have fresh 1m candles in CandlestickManager (<=10s old).
@@ -5517,8 +5545,10 @@ class Passivbot:
                 last_candle_check = int(getattr(self, "_candle_disk_check_last_ms", 0) or 0)
                 boot_delay_ms = int(getattr(self, "candle_disk_check_boot_delay_ms", 300_000) or 0)
                 boot_elapsed = int(now - getattr(self, "start_time_ms", now))
-                if candle_check_interval > 0 and boot_elapsed >= boot_delay_ms and (
-                    last_candle_check == 0 or now - last_candle_check >= candle_check_interval
+                if (
+                    candle_check_interval > 0
+                    and boot_elapsed >= boot_delay_ms
+                    and (last_candle_check == 0 or now - last_candle_check >= candle_check_interval)
                 ):
                     self._candle_disk_check_last_ms = now
                     try:
@@ -5571,7 +5601,9 @@ class Passivbot:
         except Exception:
             warmup_ratio = 0.0
         try:
-            max_warmup_minutes = int(get_optional_live_value(self.config, "max_warmup_minutes", 0) or 0)
+            max_warmup_minutes = int(
+                get_optional_live_value(self.config, "max_warmup_minutes", 0) or 0
+            )
         except Exception:
             max_warmup_minutes = 0
         span_buffer = 1.0 + max(0.0, warmup_ratio)
@@ -5660,7 +5692,9 @@ class Passivbot:
         except Exception:
             warmup_ratio = 0.0
         try:
-            max_warmup_minutes = int(get_optional_live_value(self.config, "max_warmup_minutes", 0) or 0)
+            max_warmup_minutes = int(
+                get_optional_live_value(self.config, "max_warmup_minutes", 0) or 0
+            )
         except Exception:
             max_warmup_minutes = 0
         span_buffer = 1.0 + max(0.0, warmup_ratio)
@@ -5942,7 +5976,10 @@ class Passivbot:
                                 stock_syms.add(sym)
                     if stock_syms:
                         coins = sorted(
-                            {symbol_to_coin(s) or (s.split("/")[0] if "/" in s else s) for s in stock_syms}
+                            {
+                                symbol_to_coin(s) or (s.split("/")[0] if "/" in s else s)
+                                for s in stock_syms
+                            }
                         )
                         logging.warning(
                             "Stock perps detected in approved_coins (%s). HIP-3 stock perps support is experimental/WIP.",

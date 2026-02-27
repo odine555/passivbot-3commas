@@ -72,9 +72,7 @@ def _resolve_limit_value(
     return stats_flat.get(key)
 
 
-def _resolve_aggregate_mode(
-    metric: str, aggregate_cfg: Optional[Dict[str, str]]
-) -> str:
+def _resolve_aggregate_mode(metric: str, aggregate_cfg: Optional[Dict[str, str]]) -> str:
     """Return the aggregate mode for *metric* given an aggregate config dict."""
     if not aggregate_cfg:
         return "mean"
@@ -605,7 +603,8 @@ def main():
                 stats_flat = flatten_metric_stats(metrics_block["stats"])
             if "suite_metrics" in entry:
                 stats_flat_suite, aggregated_values_suite = _suite_metrics_to_stats(
-                    entry, aggregate_cfg=aggregate_cfg,
+                    entry,
+                    aggregate_cfg=aggregate_cfg,
                 )
                 stats_flat.update(stats_flat_suite)
                 aggregated_values.update(aggregated_values_suite)

@@ -465,9 +465,7 @@ class CCXTBot(Passivbot):
         t0 = time.time()
         res = await self.cca.set_position_mode(True)
         elapsed_ms = (time.time() - t0) * 1000
-        logging.debug(
-            "[config] %s: set_position_mode completed in %.1fms", self.exchange, elapsed_ms
-        )
+        logging.debug("[config] %s: set_position_mode completed in %.1fms", self.exchange, elapsed_ms)
         logging.debug("[config] set hedge mode response: %s", res)
 
     def _should_set_margin_mode(self, symbol: str) -> bool:

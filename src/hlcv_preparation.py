@@ -83,6 +83,7 @@ from utils import (
 )
 from warmup_utils import compute_backtest_warmup_minutes, compute_per_coin_warmup_minutes
 
+
 def _has_tradfi_provider_config() -> bool:
     try:
         with open("api-keys.json", "r", encoding="utf-8") as f:
@@ -433,10 +434,10 @@ class HLCVManager:
 
         frames = []
         candidates: list[str] = []
-        
+
         # Mirror CandlestickManager's symbol sanitization for Windows compatibility
         windows_compat = os.name == "nt" or os.getenv("WINDOWS_COMPATIBILITY") == "1"
-        
+
         for name in (coin, symbol):
             if not name:
                 continue
@@ -448,7 +449,7 @@ class HLCVManager:
             # In Windows compatibility mode, also mirror CandlestickManager's ":" -> "_"
             if windows_compat and ("/" in name or ":" in name):
                 candidates.append(name.replace("/", "_").replace(":", "_"))
-        
+
         # De-duplicate while preserving order
         seen = set()
         candidates = [c for c in candidates if not (c in seen or seen.add(c))]
@@ -537,14 +538,17 @@ class HLCVManager:
                 self.load_cc()
                 assert self.cm is not None
 
-                src = np.zeros(len(df), dtype=[
-                    ("ts", "i8"),
-                    ("o", "f8"),
-                    ("h", "f8"),
-                    ("l", "f8"),
-                    ("c", "f8"),
-                    ("bv", "f8"),
-                ])
+                src = np.zeros(
+                    len(df),
+                    dtype=[
+                        ("ts", "i8"),
+                        ("o", "f8"),
+                        ("h", "f8"),
+                        ("l", "f8"),
+                        ("c", "f8"),
+                        ("bv", "f8"),
+                    ],
+                )
                 src["ts"] = df["timestamp"].astype(np.int64, copy=False).values
                 src["o"] = df["open"].astype(float, copy=False).values
                 src["h"] = df["high"].astype(float, copy=False).values
@@ -1041,9 +1045,7 @@ async def prepare_hlcvs_combined(
         for coin, exchange in market_settings_sources.items()
         if exchange
     }
-    ohlcv_exchanges = sorted(
-        set(exchanges_to_consider) | set(normalized_forced_sources.values())
-    )
+    ohlcv_exchanges = sorted(set(exchanges_to_consider) | set(normalized_forced_sources.values()))
 
     requested_start_date = require_config_value(config, "backtest.start_date")
     requested_start_ts = int(date_to_ts(requested_start_date))
@@ -1448,10 +1450,14 @@ async def _prepare_hlcvs_combined_impl(
     end_date_for_volume_ratios = ts_to_date(global_end_time)
 
     # Use OHLCV sources for volume ratio calculation, not market settings sources
-    exchanges_with_data = sorted(set([
-        chosen_mss_per_coin[coin].get("ohlcv_source", chosen_mss_per_coin[coin]["exchange"]) 
-        for coin in valid_coins
-    ]))
+    exchanges_with_data = sorted(
+        set(
+            [
+                chosen_mss_per_coin[coin].get("ohlcv_source", chosen_mss_per_coin[coin]["exchange"])
+                for coin in valid_coins
+            ]
+        )
+    )
     exchange_volume_ratios = await compute_exchange_volume_ratios(
         exchanges_with_data,
         valid_coins,
@@ -1463,7 +1469,9 @@ async def _prepare_hlcvs_combined_impl(
     exchanges_counts = defaultdict(int)
     for coin in chosen_mss_per_coin:
         # Use OHLCV source for volume normalization, not market settings source
-        ohlcv_exchange = chosen_mss_per_coin[coin].get("ohlcv_source", chosen_mss_per_coin[coin]["exchange"])
+        ohlcv_exchange = chosen_mss_per_coin[coin].get(
+            "ohlcv_source", chosen_mss_per_coin[coin]["exchange"]
+        )
         exchanges_counts[ohlcv_exchange] += 1
     reference_exchange = sorted(exchanges_counts.items(), key=lambda x: x[1])[-1][0]
     exchange_volume_ratios_mapped = defaultdict(dict)
@@ -1495,7 +1503,9 @@ async def _prepare_hlcvs_combined_impl(
         coins_by_exchange = defaultdict(list)
         for coin in valid_coins:
             # Use OHLCV source for grouping, not market settings source
-            ohlcv_ex = chosen_mss_per_coin[coin].get("ohlcv_source", chosen_mss_per_coin[coin]["exchange"])
+            ohlcv_ex = chosen_mss_per_coin[coin].get(
+                "ohlcv_source", chosen_mss_per_coin[coin]["exchange"]
+            )
             coins_by_exchange[ohlcv_ex].append(symbol_to_coin(coin))
         for ex in sorted(coins_by_exchange.keys()):
             coins_list = coins_by_exchange[ex]
@@ -1512,7 +1522,9 @@ async def _prepare_hlcvs_combined_impl(
         df = chosen_data_per_coin[coin].copy()
         df = df.set_index("timestamp").reindex(timestamps)
         # Use OHLCV source for volume normalization, not market settings source
-        exchange_for_this_coin = chosen_mss_per_coin[coin].get("ohlcv_source", chosen_mss_per_coin[coin]["exchange"])
+        exchange_for_this_coin = chosen_mss_per_coin[coin].get(
+            "ohlcv_source", chosen_mss_per_coin[coin]["exchange"]
+        )
         scaling_factor = exchange_volume_ratios_mapped[exchange_for_this_coin][reference_exchange]
         df["volume"] *= scaling_factor
 

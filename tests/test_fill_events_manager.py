@@ -28,7 +28,6 @@ from src.fill_events_manager import (
     ensure_qty_signage,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -123,20 +122,22 @@ class _FakeBybitAPI:
                 raw_list.append(info)
             else:
                 # Construct raw format from CCXT format
-                raw_list.append({
-                    "symbol": pos.get("symbol", "").replace("/", "").replace(":", ""),
-                    "orderId": pos.get("orderId", ""),
-                    "closedPnl": str(pos.get("realizedPnl", 0)),
-                    "closedSize": str(pos.get("contracts", 0)),
-                    "avgEntryPrice": str(pos.get("entryPrice", 0)),
-                    "avgExitPrice": str(pos.get("lastPrice", 0)),
-                    "updatedTime": str(pos.get("timestamp", 0)),
-                    "createdTime": str(pos.get("timestamp", 0)),
-                    "leverage": str(pos.get("leverage", 1)),
-                    "side": "Sell" if pos.get("side") == "long" else "Buy",
-                    "closeFee": "0",
-                    "openFee": "0",
-                })
+                raw_list.append(
+                    {
+                        "symbol": pos.get("symbol", "").replace("/", "").replace(":", ""),
+                        "orderId": pos.get("orderId", ""),
+                        "closedPnl": str(pos.get("realizedPnl", 0)),
+                        "closedSize": str(pos.get("contracts", 0)),
+                        "avgEntryPrice": str(pos.get("entryPrice", 0)),
+                        "avgExitPrice": str(pos.get("lastPrice", 0)),
+                        "updatedTime": str(pos.get("timestamp", 0)),
+                        "createdTime": str(pos.get("timestamp", 0)),
+                        "leverage": str(pos.get("leverage", 1)),
+                        "side": "Sell" if pos.get("side") == "long" else "Buy",
+                        "closeFee": "0",
+                        "openFee": "0",
+                    }
+                )
         return {"result": {"list": raw_list, "nextPageCursor": ""}}
 
 

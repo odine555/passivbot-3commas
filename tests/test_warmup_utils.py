@@ -22,7 +22,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from warmup_utils import compute_backtest_warmup_minutes, compute_per_coin_warmup_minutes
 
-
 # ============================================================================
 # Test Fixtures
 # ============================================================================

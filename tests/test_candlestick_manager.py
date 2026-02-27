@@ -187,9 +187,7 @@ def test_rebuild_index_for_range_updates_and_prunes(tmp_path):
     with open(idx_path, "w", encoding="utf-8") as f:
         json.dump(bad_idx, f)
 
-    res = cm.rebuild_index_for_range(
-        symbol, day0_start, day1_end, timeframe="1m", log_level="debug"
-    )
+    res = cm.rebuild_index_for_range(symbol, day0_start, day1_end, timeframe="1m", log_level="debug")
     idx = cm._ensure_symbol_index(symbol, tf="1m")
 
     assert date_key0 in idx["shards"]
@@ -652,7 +650,9 @@ async def test_get_current_close_tail_fetch_merges_and_primes(monkeypatch, tmp_p
 
 
 @pytest.mark.asyncio
-async def test_get_candles_materializes_runtime_synthetic_after_long_no_fill_gap(monkeypatch, tmp_path):
+async def test_get_candles_materializes_runtime_synthetic_after_long_no_fill_gap(
+    monkeypatch, tmp_path
+):
     fixed_now_ms = 1725590400000  # 2024-09-06 00:00:00 UTC
     monkeypatch.setattr("time.time", lambda: fixed_now_ms / 1000.0)
 
@@ -700,7 +700,9 @@ def test_real_batch_overrides_runtime_synthetic_and_invalidates_ema_cache(tmp_pa
     base_ts = _floor_minute(int(time.time() * 1000)) - 5 * ONE_MIN_MS
     base_close = 11.0
 
-    seed = np.array([(base_ts, base_close, base_close, base_close, base_close, 1.0)], dtype=CANDLE_DTYPE)
+    seed = np.array(
+        [(base_ts, base_close, base_close, base_close, base_close, 1.0)], dtype=CANDLE_DTYPE
+    )
     cm._cache[symbol] = seed
     synthesized = cm._materialize_runtime_synthetic_gap(symbol, base_ts + 2 * ONE_MIN_MS)
     assert synthesized == 2
@@ -731,7 +733,9 @@ def test_materialize_runtime_synthetic_gap_caps_at_max_synth(tmp_path):
     seed_ts = through_ts - gap_minutes * ONE_MIN_MS
     seed_close = 42.0
 
-    seed = np.array([(seed_ts, seed_close, seed_close, seed_close, seed_close, 1.0)], dtype=CANDLE_DTYPE)
+    seed = np.array(
+        [(seed_ts, seed_close, seed_close, seed_close, seed_close, 1.0)], dtype=CANDLE_DTYPE
+    )
     cm._cache[symbol] = seed
 
     synthesized = cm._materialize_runtime_synthetic_gap(symbol, through_ts)

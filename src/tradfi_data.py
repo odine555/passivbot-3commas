@@ -317,9 +317,7 @@ class AlphaVantageProvider(TradFiProvider):
                         )
                     )
 
-            logger.debug(
-                "Alpha Vantage fetched %d candles for %s", len(candles), symbol
-            )
+            logger.debug("Alpha Vantage fetched %d candles for %s", len(candles), symbol)
 
         except aiohttp.ClientError as e:
             logger.warning("Alpha Vantage API error for %s: %s", symbol, e)
@@ -383,9 +381,7 @@ class PolygonProvider(TradFiProvider):
                 data = await resp.json()
 
             if data.get("status") != "OK":
-                logger.debug(
-                    "Polygon no data for %s: status=%s", symbol, data.get("status")
-                )
+                logger.debug("Polygon no data for %s: status=%s", symbol, data.get("status"))
                 return []
 
             results = data.get("results", [])

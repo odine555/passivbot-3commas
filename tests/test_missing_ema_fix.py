@@ -16,9 +16,7 @@ ONE_HOUR_MS = 3_600_000
 
 
 def _make_cm(tmp_path):
-    return CandlestickManager(
-        exchange=None, exchange_name="ex", cache_dir=str(tmp_path / "caches")
-    )
+    return CandlestickManager(exchange=None, exchange_name="ex", cache_dir=str(tmp_path / "caches"))
 
 
 # ---------------------------------------------------------------------------
