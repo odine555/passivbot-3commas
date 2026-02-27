@@ -4424,18 +4424,46 @@ class Passivbot:
         if not hasattr(self, "_orchestrator_close_ema_fallback_counts"):
             self._orchestrator_close_ema_fallback_counts = {}
 
-        async def fetch_map(symbol: str, spans: list[float], fn):
+        async def fetch_map(symbol: str, spans: list[float], fn, ema_type: str):
             out: dict[float, float] = {}
             if not spans:
                 return out
             tasks = [asyncio.create_task(fn(symbol, sp)) for sp in spans]
             results = await asyncio.gather(*tasks, return_exceptions=True)
             for sp, res in zip(spans, results):
+                span = float(sp)
                 if isinstance(res, Exception):
+                    logging.warning(
+                        "[ema] dropping %s span for %s span=%.8g reason=%s: %s",
+                        ema_type,
+                        symbol,
+                        span,
+                        type(res).__name__,
+                        res,
+                    )
                     continue
-                val = float(res)
+                try:
+                    val = float(res)
+                except Exception as e:
+                    logging.warning(
+                        "[ema] dropping %s span for %s span=%.8g reason=%s: %s",
+                        ema_type,
+                        symbol,
+                        span,
+                        type(e).__name__,
+                        e,
+                    )
+                    continue
                 if math.isfinite(val):
-                    out[float(sp)] = val
+                    out[span] = val
+                else:
+                    logging.warning(
+                        "[ema] dropping %s span for %s span=%.8g reason=non-finite value %s",
+                        ema_type,
+                        symbol,
+                        span,
+                        val,
+                    )
             return out
 
         async def fetch_close_map(symbol: str, spans: list[float]) -> dict[float, float]:
@@ -4462,6 +4490,16 @@ class Passivbot:
                         if math.isfinite(val):
                             out[span] = val
                             prev_by_span[span] = (val, now_ms)
+                            prev_fallback_count = int(
+                                self._orchestrator_close_ema_fallback_counts.get(key, 0)
+                            )
+                            if prev_fallback_count > 0:
+                                logging.info(
+                                    "[ema] close EMA recovered %s span=%.8g after %d fallback(s)",
+                                    symbol,
+                                    span,
+                                    prev_fallback_count,
+                                )
                             self._orchestrator_close_ema_fallback_counts[key] = 0
                         else:
                             reason = f"non-finite close EMA value {val}"
@@ -4518,14 +4556,18 @@ class Passivbot:
             for sym in symbols
         }
         h1_lr_tasks = {
-            sym: asyncio.create_task(fetch_map(sym, sorted(need_h1_lr_spans[sym]), ema_lr_1h))
+            sym: asyncio.create_task(
+                fetch_map(sym, sorted(need_h1_lr_spans[sym]), ema_lr_1h, "h1_log_range")
+            )
             for sym in symbols
         }
         vol_tasks = {
-            sym: asyncio.create_task(fetch_map(sym, m1_volume_spans, ema_qv)) for sym in symbols
+            sym: asyncio.create_task(fetch_map(sym, m1_volume_spans, ema_qv, "m1_volume"))
+            for sym in symbols
         }
         lr1m_tasks = {
-            sym: asyncio.create_task(fetch_map(sym, m1_lr_spans, ema_lr_1m)) for sym in symbols
+            sym: asyncio.create_task(fetch_map(sym, m1_lr_spans, ema_lr_1m, "m1_log_range"))
+            for sym in symbols
         }
 
         m1_close_emas: dict[str, dict[float, float]] = {}
