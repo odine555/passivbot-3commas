@@ -4466,6 +4466,43 @@ class Passivbot:
                     )
             return out
 
+        async def fetch_required_map(symbol: str, spans: list[float], fn, ema_type: str):
+            out: dict[float, float] = {}
+            if not spans:
+                return out
+            tasks = [asyncio.create_task(fn(symbol, sp)) for sp in spans]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            missing: list[tuple[float, str]] = []
+            for sp, res in zip(spans, results):
+                span = float(sp)
+                reason = None
+                if isinstance(res, Exception):
+                    reason = f"{type(res).__name__}: {res}"
+                else:
+                    try:
+                        val = float(res)
+                    except Exception as e:
+                        reason = f"{type(e).__name__}: {e}"
+                    else:
+                        if math.isfinite(val):
+                            out[span] = val
+                        else:
+                            reason = f"non-finite {ema_type} value {val}"
+                if reason is None:
+                    continue
+                logging.warning(
+                    "[ema] missing required %s span for %s span=%.8g reason=%s",
+                    ema_type,
+                    symbol,
+                    span,
+                    reason,
+                )
+                missing.append((span, reason))
+            if missing:
+                detail = "; ".join([f"span={sp:.8g} reason={why}" for sp, why in missing])
+                raise RuntimeError(f"[ema] missing required {ema_type} EMA for {symbol}: {detail}")
+            return out
+
         async def fetch_close_map(symbol: str, spans: list[float]) -> dict[float, float]:
             out: dict[float, float] = {}
             if not spans:
@@ -4557,7 +4594,9 @@ class Passivbot:
         }
         h1_lr_tasks = {
             sym: asyncio.create_task(
-                fetch_map(sym, sorted(need_h1_lr_spans[sym]), ema_lr_1h, "h1_log_range")
+                fetch_required_map(
+                    sym, sorted(need_h1_lr_spans[sym]), ema_lr_1h, "h1_log_range"
+                )
             )
             for sym in symbols
         }

@@ -287,6 +287,9 @@ class _BundleReproBot:
         symbol,
         close_mode,
         close_value=100.0,
+        h1_mode="value",
+        h1_log_range_value=0.0015,
+        entry_h1_span_hours=0.0,
         prev_close_ema=None,
         prev_age_ms=5_000,
     ):
@@ -297,6 +300,9 @@ class _BundleReproBot:
         }
         self.close_mode = close_mode
         self.close_value = float(close_value)
+        self.h1_mode = h1_mode
+        self.h1_log_range_value = float(h1_log_range_value)
+        self.entry_h1_span_hours = float(entry_h1_span_hours)
         self._orchestrator_close_ema_fallback_counts = {}
         now_ms = int(time.time() * 1000)
         if prev_close_ema is None:
@@ -324,6 +330,12 @@ class _BundleReproBot:
                 return 250000.0
 
             async def get_latest_ema_log_range(self, symbol, span, tf=None, max_age_ms=60_000):
+                if tf == "1h":
+                    if self.outer.h1_mode == "timeout":
+                        raise TimeoutError("kucoinfutures GET ... RequestTimeout")
+                    if self.outer.h1_mode == "nan":
+                        return float("nan")
+                    return float(self.outer.h1_log_range_value)
                 return 0.0015
 
         self.cm = _CM(self)
@@ -342,7 +354,7 @@ class _BundleReproBot:
         if key == "ema_span_1":
             return 20.0
         if key == "entry_volatility_ema_span_hours":
-            return 0.0
+            return self.entry_h1_span_hours
         return 0.0
 
     def bot_value(self, pside, key):
@@ -455,3 +467,49 @@ async def test_kucoin_avax_close_ema_fallback_count_resets_on_recovery():
     assert bot._orchestrator_close_ema_fallback_counts[(symbol, span0)] == 0
     assert bot._orchestrator_close_ema_fallback_counts[(symbol, span1)] == 0
     assert bot._orchestrator_close_ema_fallback_counts[(symbol, span2)] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("h1_mode", ["timeout", "nan"])
+async def test_required_h1_log_range_ema_raises_when_missing(h1_mode):
+    try:
+        import passivbot as pb_mod
+    except ImportError:
+        pytest.skip("passivbot module not importable in test environment")
+
+    symbol = "AVAX/USDT:USDT"
+    bot = _BundleReproBot(
+        symbol,
+        close_mode="value",
+        h1_mode=h1_mode,
+        entry_h1_span_hours=4.0,
+    )
+    with pytest.raises(RuntimeError, match=r"missing required h1_log_range EMA for AVAX/USDT:USDT"):
+        await pb_mod.Passivbot._load_orchestrator_ema_bundle(bot, [symbol], bot.PB_modes)
+
+
+@pytest.mark.asyncio
+async def test_required_h1_log_range_ema_present_in_bundle():
+    try:
+        import passivbot as pb_mod
+    except ImportError:
+        pytest.skip("passivbot module not importable in test environment")
+
+    symbol = "AVAX/USDT:USDT"
+    bot = _BundleReproBot(
+        symbol,
+        close_mode="value",
+        h1_mode="value",
+        h1_log_range_value=0.0042,
+        entry_h1_span_hours=4.0,
+    )
+    (
+        _m1_close_emas,
+        _m1_volume_emas,
+        _m1_log_range_emas,
+        h1_log_range_emas,
+        _volumes_long,
+        _log_ranges_long,
+    ) = await pb_mod.Passivbot._load_orchestrator_ema_bundle(bot, [symbol], bot.PB_modes)
+
+    assert h1_log_range_emas[symbol][4.0] == pytest.approx(0.0042)
