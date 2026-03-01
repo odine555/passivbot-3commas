@@ -721,6 +721,8 @@ class Passivbot:
         # Realized-loss gate logging throttle
         self._loss_gate_last_log_ms = {}
         self._loss_gate_log_interval_ms = 5 * 60 * 1000  # 5 minutes
+        self._orchestrator_prev_close_ema = {}
+        self._orchestrator_close_ema_fallback_counts = {}
 
     def live_value(self, key: str):
         return require_live_value(self.config, key)
@@ -4417,19 +4419,132 @@ class Passivbot:
         m1_lr_spans = sorted(
             {s for s in (lr_span_long, lr_span_short) if s > 0.0 and math.isfinite(s)}
         )
+        if not hasattr(self, "_orchestrator_prev_close_ema"):
+            self._orchestrator_prev_close_ema = {}
+        if not hasattr(self, "_orchestrator_close_ema_fallback_counts"):
+            self._orchestrator_close_ema_fallback_counts = {}
 
-        async def fetch_map(symbol: str, spans: list[float], fn):
+        async def fetch_map(symbol: str, spans: list[float], fn, ema_type: str):
             out: dict[float, float] = {}
             if not spans:
                 return out
-            tasks = [asyncio.create_task(fn(symbol, sp)) for sp in spans]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            for sp, res in zip(spans, results):
-                if isinstance(res, Exception):
+            for sp in spans:
+                span = float(sp)
+                try:
+                    val = float(await fn(symbol, span))
+                except Exception as e:
+                    logging.warning(
+                        "[ema] dropping %s span for %s span=%.8g reason=%s: %s",
+                        ema_type,
+                        symbol,
+                        span,
+                        type(e).__name__,
+                        e,
+                    )
                     continue
-                val = float(res)
                 if math.isfinite(val):
-                    out[float(sp)] = val
+                    out[span] = val
+                else:
+                    logging.warning(
+                        "[ema] dropping %s span for %s span=%.8g reason=non-finite value %s",
+                        ema_type,
+                        symbol,
+                        span,
+                        val,
+                    )
+            return out
+
+        async def fetch_required_map(symbol: str, spans: list[float], fn, ema_type: str):
+            out: dict[float, float] = {}
+            if not spans:
+                return out
+            missing: list[tuple[float, str]] = []
+            for sp in spans:
+                span = float(sp)
+                try:
+                    val = float(await fn(symbol, span))
+                except Exception as e:
+                    reason = f"{type(e).__name__}: {e}"
+                else:
+                    if math.isfinite(val):
+                        out[span] = val
+                        continue
+                    reason = f"non-finite {ema_type} value {val}"
+                logging.warning(
+                    "[ema] missing required %s span for %s span=%.8g reason=%s",
+                    ema_type,
+                    symbol,
+                    span,
+                    reason,
+                )
+                missing.append((span, reason))
+            if missing:
+                detail = "; ".join([f"span={sp:.8g} reason={why}" for sp, why in missing])
+                raise RuntimeError(f"[ema] missing required {ema_type} EMA for {symbol}: {detail}")
+            return out
+
+        async def fetch_close_map(symbol: str, spans: list[float]) -> dict[float, float]:
+            out: dict[float, float] = {}
+            if not spans:
+                return out
+            now_ms = int(utc_ms())
+            prev_by_span = self._orchestrator_prev_close_ema.setdefault(symbol, {})
+            missing: list[tuple[float, str]] = []
+            for sp in spans:
+                span = float(sp)
+                key = (symbol, span)
+                reason = None
+                try:
+                    val = float(await ema_close(symbol, span))
+                except Exception as e:
+                    reason = f"{type(e).__name__}: {e}"
+                else:
+                    if math.isfinite(val):
+                        out[span] = val
+                        prev_by_span[span] = (val, now_ms)
+                        prev_fallback_count = int(
+                            self._orchestrator_close_ema_fallback_counts.get(key, 0)
+                        )
+                        if prev_fallback_count > 0:
+                            logging.info(
+                                "[ema] close EMA recovered %s span=%.8g after %d fallback(s)",
+                                symbol,
+                                span,
+                                prev_fallback_count,
+                            )
+                        self._orchestrator_close_ema_fallback_counts[key] = 0
+                    else:
+                        reason = f"non-finite close EMA value {val}"
+                if reason is None:
+                    continue
+                prev = prev_by_span.get(span)
+                if prev is not None:
+                    prev_val = float(prev[0])
+                    prev_ts = int(prev[1])
+                    if math.isfinite(prev_val):
+                        out[span] = prev_val
+                        n_fallbacks = int(
+                            self._orchestrator_close_ema_fallback_counts.get(key, 0)
+                        ) + 1
+                        self._orchestrator_close_ema_fallback_counts[key] = n_fallbacks
+                        age_ms = max(0, now_ms - prev_ts)
+                        logging.warning(
+                            "[ema] close EMA fallback %s span=%.8g ema=%.12g age_ms=%d"
+                            " n_fallbacks=%d reason=%s",
+                            symbol,
+                            span,
+                            prev_val,
+                            age_ms,
+                            n_fallbacks,
+                            reason,
+                        )
+                        continue
+                missing.append((span, reason))
+            if missing:
+                detail = "; ".join([f"span={sp:.8g} reason={why}" for sp, why in missing])
+                raise RuntimeError(
+                    f"[ema] missing required close EMA for {symbol}; no previous EMA fallback available: {detail}"
+                )
             return out
 
         async def ema_close(symbol: str, span: float) -> float:
@@ -4448,30 +4563,41 @@ class Passivbot:
                 await self.cm.get_latest_ema_log_range(symbol, span=span, tf="1h", max_age_ms=600_000)
             )
 
-        close_tasks = {
-            sym: asyncio.create_task(fetch_map(sym, sorted(need_close_spans[sym]), ema_close))
-            for sym in symbols
-        }
-        h1_lr_tasks = {
-            sym: asyncio.create_task(fetch_map(sym, sorted(need_h1_lr_spans[sym]), ema_lr_1h))
-            for sym in symbols
-        }
-        vol_tasks = {
-            sym: asyncio.create_task(fetch_map(sym, m1_volume_spans, ema_qv)) for sym in symbols
-        }
-        lr1m_tasks = {
-            sym: asyncio.create_task(fetch_map(sym, m1_lr_spans, ema_lr_1m)) for sym in symbols
-        }
+        async def load_symbol_bundle(sym: str):
+            close = await fetch_close_map(sym, sorted(need_close_spans[sym]))
+            h1 = await fetch_required_map(
+                sym, sorted(need_h1_lr_spans[sym]), ema_lr_1h, "h1_log_range"
+            )
+            vol = await fetch_map(sym, m1_volume_spans, ema_qv, "m1_volume")
+            lr1m = await fetch_map(sym, m1_lr_spans, ema_lr_1m, "m1_log_range")
+            return close, vol, lr1m, h1
+
+        symbol_tasks = [asyncio.create_task(load_symbol_bundle(sym)) for sym in symbols]
+        symbol_results = await asyncio.gather(*symbol_tasks, return_exceptions=True)
 
         m1_close_emas: dict[str, dict[float, float]] = {}
         m1_volume_emas: dict[str, dict[float, float]] = {}
         m1_log_range_emas: dict[str, dict[float, float]] = {}
         h1_log_range_emas: dict[str, dict[float, float]] = {}
-        for sym in symbols:
-            m1_close_emas[sym] = await close_tasks[sym]
-            h1_log_range_emas[sym] = await h1_lr_tasks[sym]
-            m1_volume_emas[sym] = await vol_tasks[sym]
-            m1_log_range_emas[sym] = await lr1m_tasks[sym]
+        errors: list[tuple[str, Exception]] = []
+        for sym, res in zip(symbols, symbol_results):
+            if isinstance(res, Exception):
+                errors.append((sym, res))
+                continue
+            close, vol, lr1m, h1 = res
+            m1_close_emas[sym] = close
+            m1_volume_emas[sym] = vol
+            m1_log_range_emas[sym] = lr1m
+            h1_log_range_emas[sym] = h1
+        if errors:
+            for sym, err in errors[1:]:
+                logging.debug(
+                    "[ema] additional symbol EMA bundle failure %s: %s: %s",
+                    sym,
+                    type(err).__name__,
+                    err,
+                )
+            raise errors[0][1]
 
         # Convenience: compute the single-span values used by legacy forager logging.
         volumes_long = {s: m1_volume_emas[s].get(vol_span_long, 0.0) for s in symbols}
