@@ -161,14 +161,44 @@
             "short_n_positions": [1, 5, 1],
             "short_total_wallet_exposure_limit": [0.5, 2.0]
         },
+        "backend": "pymoo",
         "compress_results_file": true,
+        "crossover_eta": 20,
         "crossover_probability": 0.64,
         "enable_overrides": [],
+        "fixed_params": [],
+        "fixed_runtime_overrides": {
+            "bot.long.hsl_no_restart_drawdown_threshold": 1,
+            "bot.short.hsl_no_restart_drawdown_threshold": 1
+        },
         "iters": 500,
         "limits": {},
+        "mutation_eta": 20,
+        "mutation_indpb": 0.0135135135,
         "mutation_probability": 0.34,
         "n_cpus": 6,
+        "offspring_multiplier": 1,
+        "pareto_max_size": 1000,
         "population_size": 100,
+        "pymoo": {
+            "algorithm": "auto",
+            "shared": {
+                "crossover_eta": 20,
+                "crossover_prob_var": 0.5,
+                "eliminate_duplicates": true,
+                "mutation_eta": 20,
+                "mutation_prob_var": "auto"
+            },
+            "algorithms": {
+                "nsga2": {},
+                "nsga3": {
+                    "ref_dirs": {
+                        "method": "das_dennis",
+                        "n_partitions": "auto"
+                    }
+                }
+            }
+        },
         "round_to_n_significant_digits": 4,
         "scoring": [
             "adg_btc",
