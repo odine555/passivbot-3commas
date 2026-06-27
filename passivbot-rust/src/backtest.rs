@@ -713,9 +713,7 @@ fn calc_entry_balance_pct(params: &BotParams, effective_n_positions: usize) -> f
     if effective_n_positions == 0 {
         return 0.0;
     }
-    let allowance_multiplier = 1.0 + params.risk_we_excess_allowance_pct.max(0.0);
-    params.total_wallet_exposure_limit * params.entry_initial_qty_pct * allowance_multiplier
-        / effective_n_positions as f64
+    params.total_wallet_exposure_limit * params.entry_initial_qty_pct / effective_n_positions as f64
 }
 
 impl<'a> Backtest<'a> {
@@ -757,198 +755,8 @@ impl<'a> Backtest<'a> {
         }
     }
 
-    fn debug_dump_unstuck_calc(&mut self, k: usize, idx: usize, side: usize) {
-        if !DEBUG_DUMP_UNSTUCK_CALC {
-            return;
-        }
-        if DEBUG_UNSTUCK_WINDOW
-            .map(|(start, end)| k < start || k > end)
-            .unwrap_or(true)
-        {
-            return;
-        }
-
-        let coin = self
-            .backtest_params
-            .coins
-            .get(idx)
-            .cloned()
-            .unwrap_or_else(|| format!("idx_{idx}"));
-        if let Some(want) = DEBUG_UNSTUCK_COIN_FILTER {
-            if coin != want {
-                return;
-            }
-        }
-
-        let position = match side {
-            LONG => self.positions.long.get(&idx).copied().unwrap_or_default(),
-            SHORT => self.positions.short.get(&idx).copied().unwrap_or_default(),
-            _ => return,
-        };
-        if position.size == 0.0 || !position.price.is_finite() || position.price <= 0.0 {
-            return;
-        }
-
-        let balance = self.balance.usd_total_balance_rounded;
-        let balance_raw = self.balance.usd_total_balance;
-        let (effective_cumsum_max, effective_cumsum_last) = self.effective_pnl_cumsum(k);
-        let allowance = match side {
-            LONG => {
-                if self.bot_params_master.long.unstuck_loss_allowance_pct > 0.0 {
-                    calc_auto_unstuck_allowance(
-                        balance_raw,
-                        self.bot_params_master.long.unstuck_loss_allowance_pct
-                            * self.bot_params_master.long.total_wallet_exposure_limit,
-                        effective_cumsum_max,
-                        effective_cumsum_last,
-                    )
-                } else {
-                    0.0
-                }
-            }
-            SHORT => {
-                if self.bot_params_master.short.unstuck_loss_allowance_pct > 0.0 {
-                    calc_auto_unstuck_allowance(
-                        balance_raw,
-                        self.bot_params_master.short.unstuck_loss_allowance_pct
-                            * self.bot_params_master.short.total_wallet_exposure_limit,
-                        effective_cumsum_max,
-                        effective_cumsum_last,
-                    )
-                } else {
-                    0.0
-                }
-            }
-            _ => 0.0,
-        };
-
-        let bp = self.bp(idx, side);
-        let ema_bands = self.emas[idx].compute_bands(side);
-        let current_price = self.hlcvs_value(k, idx, CLOSE);
-        let ex = &self.exchange_params_list[idx];
-
-        let size_abs = position.size.abs();
-        let allowance_multiplier = 1.0 + bp.risk_we_excess_allowance_pct.max(0.0);
-        let effective_wel = bp.wallet_exposure_limit * allowance_multiplier;
-        let wallet_exposure = calc_wallet_exposure(ex.c_mult, balance, size_abs, position.price);
-        let ema_price_target = match side {
-            LONG => ema_bands.upper * (1.0 + bp.unstuck_ema_dist),
-            SHORT => ema_bands.lower * (1.0 - bp.unstuck_ema_dist),
-            _ => 0.0,
-        };
-        let ema_price_rounded = match side {
-            LONG => round_up(ema_price_target, ex.price_step),
-            SHORT => round_dn(ema_price_target, ex.price_step),
-            _ => 0.0,
-        };
-        let meets_trigger = match side {
-            LONG => current_price >= ema_price_rounded,
-            SHORT => current_price <= ema_price_rounded,
-            _ => false,
-        };
-
-        let min_entry_qty = calc_min_entry_qty(current_price, ex);
-        let target_qty_raw = crate::utils::cost_to_qty(
-            balance * effective_wel * bp.unstuck_close_pct,
-            current_price,
-            ex.c_mult,
-        );
-        let target_qty_dn = round_dn(target_qty_raw, ex.qty_step).max(0.0);
-        let close_qty_pre_allowance = match side {
-            LONG => -f64::min(size_abs, f64::max(min_entry_qty, target_qty_dn)),
-            SHORT => f64::min(size_abs, f64::max(min_entry_qty, target_qty_dn)),
-            _ => 0.0,
-        };
-
-        let pnl_if_closed = match side {
-            LONG => calc_pnl_long(
-                position.price,
-                current_price,
-                close_qty_pre_allowance,
-                ex.c_mult,
-            ),
-            SHORT => calc_pnl_short(
-                position.price,
-                current_price,
-                close_qty_pre_allowance,
-                ex.c_mult,
-            ),
-            _ => 0.0,
-        };
-
-        let mut close_qty_final = close_qty_pre_allowance;
-        if allowance > 0.0 && pnl_if_closed < 0.0 {
-            let pnl_abs = pnl_if_closed.abs();
-            if pnl_abs > allowance {
-                let scaled_qty = close_qty_pre_allowance.abs() * (allowance / pnl_abs);
-                let scaled_qty = f64::min(size_abs, scaled_qty);
-                let scaled_qty = f64::max(min_entry_qty, round_dn(scaled_qty, ex.qty_step));
-                close_qty_final = match side {
-                    LONG => -scaled_qty,
-                    SHORT => scaled_qty,
-                    _ => close_qty_pre_allowance,
-                };
-            }
-        }
-
-        let payload = UnstuckCalcDebug {
-            step: k,
-            coin,
-            idx,
-            side,
-            balance,
-            balance_bits: balance.to_bits(),
-            allowance,
-            allowance_bits: allowance.to_bits(),
-            position_size: position.size,
-            position_size_bits: position.size.to_bits(),
-            position_price: position.price,
-            position_price_bits: position.price.to_bits(),
-            current_price,
-            current_price_bits: current_price.to_bits(),
-            ema_band_upper: ema_bands.upper,
-            ema_band_upper_bits: ema_bands.upper.to_bits(),
-            ema_band_lower: ema_bands.lower,
-            ema_band_lower_bits: ema_bands.lower.to_bits(),
-            wallet_exposure_limit: bp.wallet_exposure_limit,
-            wallet_exposure_limit_bits: bp.wallet_exposure_limit.to_bits(),
-            risk_we_excess_allowance_pct: bp.risk_we_excess_allowance_pct,
-            unstuck_threshold: bp.unstuck_threshold,
-            unstuck_close_pct: bp.unstuck_close_pct,
-            unstuck_ema_dist: bp.unstuck_ema_dist,
-            qty_step: ex.qty_step,
-            price_step: ex.price_step,
-            min_qty: ex.min_qty,
-            min_cost: ex.min_cost,
-            c_mult: ex.c_mult,
-            effective_wel,
-            effective_wel_bits: effective_wel.to_bits(),
-            wallet_exposure,
-            wallet_exposure_bits: wallet_exposure.to_bits(),
-            ema_price_target,
-            ema_price_target_bits: ema_price_target.to_bits(),
-            ema_price_rounded,
-            ema_price_rounded_bits: ema_price_rounded.to_bits(),
-            meets_trigger,
-            min_entry_qty,
-            min_entry_qty_bits: min_entry_qty.to_bits(),
-            target_qty_raw,
-            target_qty_raw_bits: target_qty_raw.to_bits(),
-            target_qty_dn,
-            target_qty_dn_bits: target_qty_dn.to_bits(),
-            close_qty_pre_allowance,
-            close_qty_pre_allowance_bits: close_qty_pre_allowance.to_bits(),
-            pnl_if_closed,
-            pnl_if_closed_bits: pnl_if_closed.to_bits(),
-            close_qty_final,
-            close_qty_final_bits: close_qty_final.to_bits(),
-        };
-
-        let fname = "debug_unstuck_calc_orchestrator.json";
-        if let Ok(mut f) = File::create(fname) {
-            let _ = serde_json::to_writer_pretty(&mut f, &payload);
-            let _ = writeln!(f);
-        }
+    fn debug_dump_unstuck_calc(&mut self, _k: usize, _idx: usize, _side: usize) {
+        // Unstuck debug dump removed (Pass 2 DCA cleanup).
     }
 
     fn record_balance_trace(
@@ -1030,28 +838,10 @@ impl<'a> Backtest<'a> {
         let balance_raw = self.balance.usd_total_balance;
         let (effective_cumsum_max, effective_cumsum_last) = self.effective_pnl_cumsum(k);
 
-        let long_allowance = if self.bot_params_master.long.unstuck_loss_allowance_pct > 0.0 {
-            calc_auto_unstuck_allowance(
-                balance_raw,
-                self.bot_params_master.long.unstuck_loss_allowance_pct
-                    * self.bot_params_master.long.total_wallet_exposure_limit,
-                effective_cumsum_max,
-                effective_cumsum_last,
-            )
-        } else {
-            0.0
-        };
-        let short_allowance = if self.bot_params_master.short.unstuck_loss_allowance_pct > 0.0 {
-            calc_auto_unstuck_allowance(
-                balance_raw,
-                self.bot_params_master.short.unstuck_loss_allowance_pct
-                    * self.bot_params_master.short.total_wallet_exposure_limit,
-                effective_cumsum_max,
-                effective_cumsum_last,
-            )
-        } else {
-            0.0
-        };
+        // Unstuck removed (Pass 2 DCA cleanup): no auto-unstuck allowance.
+        let _ = (balance_raw, effective_cumsum_max, effective_cumsum_last);
+        let long_allowance = 0.0;
+        let short_allowance = 0.0;
 
         let symbols: Vec<orchestrator::SymbolInput> = indices
             .into_iter()
@@ -1204,21 +994,7 @@ impl<'a> Backtest<'a> {
                 m1.log_range
                     .push((lr_span_short, self.emas[idx].log_range_short));
 
-                // 1h log-range EMA for grid spacing/trailing volatility weight (per-coin span).
-                {
-                    let span = self.bot_params[idx].long.entry_volatility_ema_span_hours;
-                    if span > 0.0 {
-                        h1.log_range
-                            .push((span, self.emas[idx].entry_volatility_logrange_ema_1h_long));
-                    }
-                }
-                {
-                    let span = self.bot_params[idx].short.entry_volatility_ema_span_hours;
-                    if span > 0.0 {
-                        h1.log_range
-                            .push((span, self.emas[idx].entry_volatility_logrange_ema_1h_short));
-                    }
-                }
+                // 1h log-range EMA (grid spacing/trailing volatility weight) removed (Pass 2).
 
                 let emas = OrchestratorEmaBundle { m1, h1 };
 
@@ -1323,32 +1099,10 @@ impl<'a> Backtest<'a> {
         input.balance = self.balance.usd_total_balance_rounded;
         input.balance_raw = self.balance.usd_total_balance;
 
-        let balance_raw = input.balance_raw;
         let (effective_cumsum_max, effective_cumsum_last) = self.effective_pnl_cumsum(k);
-        input.global.unstuck_allowance_long =
-            if self.bot_params_master.long.unstuck_loss_allowance_pct > 0.0 {
-                calc_auto_unstuck_allowance(
-                    balance_raw,
-                    self.bot_params_master.long.unstuck_loss_allowance_pct
-                        * self.bot_params_master.long.total_wallet_exposure_limit,
-                    effective_cumsum_max,
-                    effective_cumsum_last,
-                )
-            } else {
-                0.0
-            };
-        input.global.unstuck_allowance_short =
-            if self.bot_params_master.short.unstuck_loss_allowance_pct > 0.0 {
-                calc_auto_unstuck_allowance(
-                    balance_raw,
-                    self.bot_params_master.short.unstuck_loss_allowance_pct
-                        * self.bot_params_master.short.total_wallet_exposure_limit,
-                    effective_cumsum_max,
-                    effective_cumsum_last,
-                )
-            } else {
-                0.0
-            };
+        // Unstuck removed (Pass 2 DCA cleanup): no auto-unstuck allowance.
+        input.global.unstuck_allowance_long = 0.0;
+        input.global.unstuck_allowance_short = 0.0;
         input.global.max_realized_loss_pct = self.backtest_params.max_realized_loss_pct;
         input.global.realized_pnl_cumsum_max = effective_cumsum_max;
         input.global.realized_pnl_cumsum_last = effective_cumsum_last;
@@ -1498,27 +1252,7 @@ impl<'a> Backtest<'a> {
                 sym.emas.m1.log_range[0].1 = self.emas[idx].log_range_long;
                 sym.emas.m1.log_range[1].1 = self.emas[idx].log_range_short;
             }
-            match sym.emas.h1.log_range.len() {
-                2 => {
-                    sym.emas.h1.log_range[0].1 =
-                        self.emas[idx].entry_volatility_logrange_ema_1h_long;
-                    sym.emas.h1.log_range[1].1 =
-                        self.emas[idx].entry_volatility_logrange_ema_1h_short;
-                }
-                1 => {
-                    let span0 = sym.emas.h1.log_range[0].0;
-                    if (span0 - self.bot_params[idx].long.entry_volatility_ema_span_hours).abs()
-                        < 1e-12
-                    {
-                        sym.emas.h1.log_range[0].1 =
-                            self.emas[idx].entry_volatility_logrange_ema_1h_long;
-                    } else {
-                        sym.emas.h1.log_range[0].1 =
-                            self.emas[idx].entry_volatility_logrange_ema_1h_short;
-                    }
-                }
-                _ => {}
-            }
+            // h1 log-range EMA (grid spacing/trailing volatility) removed (Pass 2 DCA cleanup).
         }
 
         input
@@ -1744,13 +1478,12 @@ impl<'a> Backtest<'a> {
             warmup_bars = calc_warmup_bars(&bot_params);
         }
 
+        // Trailing entries/closes removed (Pass 2 DCA cleanup): never enabled.
         let trailing_enabled: Vec<TrailingEnabled> = bot_params
             .iter()
-            .map(|bp| TrailingEnabled {
-                long: bp.long.close_trailing_grid_ratio != 0.0
-                    || bp.long.entry_trailing_grid_ratio != 0.0,
-                short: bp.short.close_trailing_grid_ratio != 0.0
-                    || bp.short.entry_trailing_grid_ratio != 0.0,
+            .map(|_| TrailingEnabled {
+                long: false,
+                short: false,
             })
             .collect();
         let any_trailing_long = trailing_enabled.iter().any(|te| te.long);
@@ -1781,26 +1514,15 @@ impl<'a> Backtest<'a> {
                 bp.short.forager_volume_drop_pct != 0.0
                     || bp.short.forager_score_weights.volume != 0.0
             }),
-            needs_log_range_long: bot_params.iter().any(|bp| {
-                bp.long.forager_score_weights.volatility != 0.0
-                    || bp.long.entry_grid_spacing_volatility_weight != 0.0
-                    || bp.long.entry_trailing_threshold_volatility_weight != 0.0
-                    || bp.long.entry_trailing_retracement_volatility_weight != 0.0
-                    || bp.long.entry_trailing_grid_ratio != 0.0
-            }),
-            needs_log_range_short: bot_params.iter().any(|bp| {
-                bp.short.forager_score_weights.volatility != 0.0
-                    || bp.short.entry_grid_spacing_volatility_weight != 0.0
-                    || bp.short.entry_trailing_threshold_volatility_weight != 0.0
-                    || bp.short.entry_trailing_retracement_volatility_weight != 0.0
-                    || bp.short.entry_trailing_grid_ratio != 0.0
-            }),
-            needs_entry_volatility_logrange_ema_1h_long: bot_params
+            needs_log_range_long: bot_params
                 .iter()
-                .any(|bp| bp.long.entry_volatility_ema_span_hours > 0.0),
-            needs_entry_volatility_logrange_ema_1h_short: bot_params
+                .any(|bp| bp.long.forager_score_weights.volatility != 0.0),
+            needs_log_range_short: bot_params
                 .iter()
-                .any(|bp| bp.short.entry_volatility_ema_span_hours > 0.0),
+                .any(|bp| bp.short.forager_score_weights.volatility != 0.0),
+            // entry_volatility_ema_span_hours removed (Pass 2 DCA cleanup).
+            needs_entry_volatility_logrange_ema_1h_long: false,
+            needs_entry_volatility_logrange_ema_1h_short: false,
             coin_first_valid_idx: first_valid_idx,
             coin_last_valid_idx: last_valid_idx,
             coin_trade_start_idx: trade_start_idx,
@@ -2247,8 +1969,7 @@ impl<'a> Backtest<'a> {
         if base_limit <= 0.0 {
             return false;
         }
-        let allowance_multiplier = 1.0 + bot.risk_we_excess_allowance_pct.max(0.0);
-        let effective_limit = base_limit * allowance_multiplier;
+        let effective_limit = base_limit;
         let projected_cost =
             self.balance.usd_total_balance * effective_limit * bot.entry_initial_qty_pct;
         projected_cost >= min_cost
@@ -4811,22 +4532,9 @@ fn calc_ema_alphas(bot_params_pair: &BotParamsPair, interval: u64) -> EmaAlphas 
         ),
         // Note: entry_volatility spans are in HOURS and computed from hourly buckets,
         // so they do NOT need interval adjustment (hourly buckets are calendar-based)
-        entry_volatility_logrange_ema_1h_alpha_long: {
-            let span = bot_params_pair.long.entry_volatility_ema_span_hours;
-            if span > 0.0 {
-                2.0 / (span + 1.0)
-            } else {
-                0.0
-            }
-        },
-        entry_volatility_logrange_ema_1h_alpha_short: {
-            let span = bot_params_pair.short.entry_volatility_ema_span_hours;
-            if span > 0.0 {
-                2.0 / (span + 1.0)
-            } else {
-                0.0
-            }
-        },
+        // entry_volatility_ema_span_hours removed (Pass 2 DCA cleanup).
+        entry_volatility_logrange_ema_1h_alpha_long: 0.0,
+        entry_volatility_logrange_ema_1h_alpha_short: 0.0,
     }
 }
 
@@ -7904,14 +7612,12 @@ fn calc_warmup_bars(bot_params: &[BotParamsPair]) -> usize {
             pair.long.ema_span_1,
             pair.long.filter_volume_ema_span as f64,
             pair.long.filter_volatility_ema_span as f64,
-            pair.long.entry_volatility_ema_span_hours * 60.0,
         ];
         let spans_short = [
             pair.short.ema_span_0,
             pair.short.ema_span_1,
             pair.short.filter_volume_ema_span as f64,
             pair.short.filter_volatility_ema_span as f64,
-            pair.short.entry_volatility_ema_span_hours * 60.0,
         ];
         for span in spans_long.iter().chain(spans_short.iter()) {
             if span.is_finite() {

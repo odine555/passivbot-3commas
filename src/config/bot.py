@@ -15,21 +15,13 @@ BOT_POSITION_SIDES = ("long", "short")
 DEFAULT_FORAGER_SCORE_WEIGHTS = {"volume": 0.0, "ema_readiness": 0.0, "volatility": 1.0}
 DEFAULT_HSL_TIER_RATIOS = {"yellow": 0.5, "orange": 0.75}
 REQUIRED_BOT_KEYS = (
-    "close_grid_markup_start",
-    "close_grid_markup_end",
-    "close_grid_qty_pct",
     "ema_span_0",
     "ema_span_1",
-    "entry_grid_double_down_factor",
-    "entry_grid_spacing_pct",
     "entry_initial_ema_dist",
     "entry_initial_qty_pct",
 )
-CLIFF_EDGE_THRESHOLD_KEYS = (
-    "risk_wel_enforcer_threshold",
-    "risk_twel_enforcer_threshold",
-    "unstuck_threshold",
-)
+# Pass 2 DCA cleanup: risk/unstuck cliff-edge thresholds removed.
+CLIFF_EDGE_THRESHOLD_KEYS = ()
 CLIFF_EDGE_DUST_EPS = 1e-9
 CLIFF_EDGE_WARNING_THRESHOLD = 0.1
 
@@ -69,12 +61,8 @@ def validate_unstuck_ema_dist_value(value, *, path: str, pside: str) -> None:
 
 
 def validate_bot_config(result: dict) -> None:
-    for pside in BOT_POSITION_SIDES:
-        validate_unstuck_ema_dist_value(
-            result["bot"][pside]["unstuck_ema_dist"],
-            path=f"bot.{pside}.unstuck_ema_dist",
-            pside=pside,
-        )
+    # Pass 2 DCA cleanup: unstuck_ema_dist removed; nothing to validate here.
+    _ = result
 
 
 def _bot_path(pside: str, key: str) -> str:
@@ -326,10 +314,6 @@ def ensure_bot_defaults(
     for pside in BOT_POSITION_SIDES:
         bot_cfg = result["bot"][pside]
         had_any_required_core = any(key in bot_cfg for key in REQUIRED_BOT_KEYS)
-        legacy_min_markup = _read_legacy_alias(bot_cfg, "close_grid_min_markup", "min_markup")
-        legacy_markup_range = _read_legacy_alias(
-            bot_cfg, "close_grid_markup_range", "markup_range"
-        )
 
         if "total_wallet_exposure_limit" not in bot_cfg:
             _set_hydrated_bot_value(
@@ -344,90 +328,14 @@ def ensure_bot_defaults(
             bot_cfg = result["bot"][pside]
         side_enabled = _bot_side_enabled(bot_cfg, pside=pside)
 
-        if (
-            "close_grid_markup_start" not in bot_cfg
-            and legacy_min_markup is not None
-            and legacy_markup_range is not None
-        ):
-            _set_hydrated_bot_value(
-                result,
-                pside=pside,
-                key="close_grid_markup_start",
-                value=legacy_min_markup + legacy_markup_range,
-                reason="legacy close_grid_min_markup + close_grid_markup_range",
-                verbose=verbose,
-                tracker=tracker,
-            )
-        if "close_grid_markup_end" not in bot_cfg and legacy_min_markup is not None:
-            _set_hydrated_bot_value(
-                result,
-                pside=pside,
-                key="close_grid_markup_end",
-                value=legacy_min_markup,
-                reason="legacy close_grid_min_markup",
-                verbose=verbose,
-                tracker=tracker,
-            )
-        if "close_grid_qty_pct" not in bot_cfg:
-            derived_close_grid_qty_pct = _derive_close_grid_qty_pct(
-                bot_cfg,
-                path=_bot_path(pside, "close_grid_qty_pct"),
-            )
-            if derived_close_grid_qty_pct is not None:
-                _set_hydrated_bot_value(
-                    result,
-                    pside=pside,
-                    key="close_grid_qty_pct",
-                    value=derived_close_grid_qty_pct,
-                    reason="legacy n_closes",
-                    verbose=verbose,
-                    tracker=tracker,
-                )
+        # Pass 2 DCA cleanup: only kept + dca_/forager_/hsl_ params are hydrated.
         for key, default_value, reason in [
-            ("close_trailing_grid_ratio", 0.0, "pre-trailing compatibility default"),
-            ("close_trailing_qty_pct", 1.0, "pre-trailing compatibility default"),
-            ("close_trailing_retracement_pct", 0.002, "pre-trailing compatibility placeholder"),
-            ("close_trailing_threshold_pct", 0.005, "pre-trailing compatibility placeholder"),
             ("dca_price_deviation_pct", 0.01, "DCA omitted defaults to template value"),
             ("dca_step_scale", 1.0, "DCA omitted defaults to template value"),
             ("dca_volume_scale", 1.28, "DCA omitted defaults to template value"),
             ("dca_so1_ratio", 1.0, "DCA omitted defaults to template value"),
             ("dca_max_safety_orders", 20, "DCA omitted defaults to template value"),
             ("dca_take_profit_pct", 0.015, "DCA omitted defaults to template value"),
-            (
-                "entry_grid_spacing_volatility_weight",
-                0.0,
-                "omitted volatility weighting disables feature",
-            ),
-            (
-                "entry_grid_spacing_we_weight",
-                0.0,
-                "omitted wallet-exposure weighting disables feature",
-            ),
-            ("entry_trailing_grid_ratio", 0.0, "pre-trailing compatibility default"),
-            ("entry_trailing_retracement_pct", 0.002, "pre-trailing compatibility placeholder"),
-            (
-                "entry_trailing_retracement_volatility_weight",
-                0.0,
-                "omitted volatility weighting disables feature",
-            ),
-            (
-                "entry_trailing_retracement_we_weight",
-                0.0,
-                "omitted wallet-exposure weighting disables feature",
-            ),
-            ("entry_trailing_threshold_pct", 0.005, "pre-trailing compatibility placeholder"),
-            (
-                "entry_trailing_threshold_volatility_weight",
-                0.0,
-                "omitted volatility weighting disables feature",
-            ),
-            (
-                "entry_trailing_threshold_we_weight",
-                0.0,
-                "omitted wallet-exposure weighting disables feature",
-            ),
-            ("entry_volatility_ema_span_hours", 0.0, "omitted volatility weighting disables feature"),
             (
                 "forager_volume_drop_pct",
                 result["live"].get("filter_relative_volume_clip_pct", 0.5),
@@ -444,13 +352,6 @@ def ensure_bot_defaults(
             ),
             ("hsl_panic_close_order_type", "market", "disabled HSL compatibility default"),
             ("hsl_red_threshold", 0.25, "disabled HSL compatibility default"),
-            ("risk_twel_enforcer_threshold", 0.0, "omitted risk enforcer disables feature"),
-            ("risk_we_excess_allowance_pct", 0.0, "omitted allowance disables feature"),
-            ("risk_wel_enforcer_threshold", 0.0, "omitted risk enforcer disables feature"),
-            ("unstuck_close_pct", 0.01, "disabled unstuck compatibility placeholder"),
-            ("unstuck_ema_dist", 0.0, "omitted unstuck disables EMA trigger"),
-            ("unstuck_loss_allowance_pct", 0.0, "omitted unstuck disables feature"),
-            ("unstuck_threshold", 0.0, "omitted unstuck disables feature"),
         ]:
             if key not in bot_cfg:
                 _set_hydrated_bot_value(
@@ -463,25 +364,6 @@ def ensure_bot_defaults(
                     tracker=tracker,
                 )
                 bot_cfg = result["bot"][pside]
-        if "entry_trailing_double_down_factor" not in bot_cfg:
-            default_entry_trailing_double_down_factor = bot_cfg.get(
-                "entry_grid_double_down_factor", 1.0
-            )
-            reason = (
-                "entry_grid_double_down_factor"
-                if "entry_grid_double_down_factor" in bot_cfg
-                else "legacy trailing double-down compatibility default"
-            )
-            _set_hydrated_bot_value(
-                result,
-                pside=pside,
-                key="entry_trailing_double_down_factor",
-                value=default_entry_trailing_double_down_factor,
-                reason=reason,
-                verbose=verbose,
-                tracker=tracker,
-            )
-            bot_cfg = result["bot"][pside]
         if "forager_volatility_ema_span" not in bot_cfg:
             derived_volatility_span = _read_legacy_alias(
                 bot_cfg,
@@ -574,12 +456,8 @@ def ensure_optimize_bounds_for_bot(
     bounds = result["optimize"]["bounds"]
     for pside in BOT_POSITION_SIDES:
         for key, default_value in [
-            ("close_trailing_qty_pct", [0.05, 1.0]),
-            ("entry_trailing_double_down_factor", [0.01, 3.0]),
             ("forager_volatility_ema_span", [10.0, 1440.0]),
             ("forager_volume_ema_span", [10.0, 1440.0]),
-            ("close_grid_markup_start", bounds.get(f"{pside}_min_markup", [0.001, 0.03])),
-            ("close_grid_markup_end", bounds.get(f"{pside}_close_grid_min_markup", [0.001, 0.03])),
             ("forager_volume_drop_pct", [0.0, 1.0]),
         ]:
             opt_key = f"{pside}_{key}"

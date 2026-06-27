@@ -40,10 +40,7 @@ mod core {
         calc_entries_long, calc_entries_short, calc_min_entry_qty, calc_next_entry_long,
         calc_next_entry_short,
     };
-    use crate::risk::{
-        calc_twel_enforcer_actions, calc_unstucking_action, GateEntriesPosition,
-        TwelEnforcerInputPosition, UnstuckPositionInput,
-    };
+    use crate::risk::GateEntriesPosition;
     use crate::types::{
         BotParams, BotParamsPair, EMABands, ExchangeParams, OrderBook, OrderType, Position,
         StateParams, TrailingPriceBundle,
@@ -539,23 +536,12 @@ mod core {
     }
 
     fn derive_entry_volatility_logrange_ema_1h(
-        symbol_idx: usize,
-        emas: &EmaBundle,
-        bot: &BotParams,
+        _symbol_idx: usize,
+        _emas: &EmaBundle,
+        _bot: &BotParams,
     ) -> Result<f64, OrchestratorError> {
-        let span = bot.entry_volatility_ema_span_hours;
-        if span <= 0.0 {
-            return Ok(0.0);
-        }
-        let v = ema_lookup(&emas.h1.log_range, span)
-            .ok_or(OrchestratorError::MissingEma { symbol_idx })?;
-        if !(v.is_finite() && v >= 0.0) {
-            return Err(OrchestratorError::NonFiniteInput {
-                field: "entry_volatility_logrange_ema_1h",
-                symbol_idx: Some(symbol_idx),
-            });
-        }
-        Ok(v)
+        // entry_volatility_ema_span_hours removed (Pass 2 DCA cleanup): always 0.
+        Ok(0.0)
     }
 
     fn map_forager_selection_error(err: ForagerSelectionError) -> OrchestratorError {
@@ -675,10 +661,7 @@ mod core {
         {
             return None;
         }
-        let base_limit = bot.wallet_exposure_limit;
-        let allowance_pct = bot.risk_we_excess_allowance_pct;
-        let allowance_multiplier = 1.0 + allowance_pct.max(0.0);
-        let effective_limit = base_limit * allowance_multiplier;
+        let effective_limit = bot.wallet_exposure_limit;
         if !(effective_limit.is_finite() && effective_limit > 0.0) {
             return None;
         }
@@ -1514,8 +1497,6 @@ mod core {
         features: Vec<ForagerCandidate>,
         gate_positions_long: Vec<GateEntriesPosition>,
         gate_positions_short: Vec<GateEntriesPosition>,
-        twel_positions: Vec<TwelEnforcerInputPosition>,
-        unstuck_inputs: Vec<UnstuckPositionInput>,
         all_entries: Vec<IdealOrder>,
         gate_current_positions: Vec<Option<(f64, f64, f64)>>,
         gate_scratch: Vec<Option<(f64, f64, f64, f64)>>,
@@ -2726,219 +2707,7 @@ mod core {
             }
         }
 
-        // Unstuck: select one global unstuck close and add it (do not replace).
-        workspace.unstuck_inputs.clear();
-        for s in per_long.iter().filter_map(|v| v.as_ref()) {
-            if matches!(s.mode, TradingMode::Manual | TradingMode::Panic) || s.pos.size == 0.0 {
-                continue;
-            }
-            let sym = &input.symbols[s.symbol_idx];
-            let bot = &sym.long.bot_params;
-            let enabled = bot.unstuck_loss_allowance_pct > 0.0
-                && bot.unstuck_close_pct > 0.0
-                && bot.unstuck_threshold > 0.0;
-            if !enabled {
-                continue;
-            }
-            let ema_bands = derive_ema_bands(s.symbol_idx, &sym.emas, bot)?;
-            workspace.unstuck_inputs.push(UnstuckPositionInput {
-                idx: s.symbol_idx,
-                side: LONG,
-                position_size: s.pos.size,
-                position_price: s.pos.price,
-                wallet_exposure_limit: bot.wallet_exposure_limit,
-                risk_we_excess_allowance_pct: bot.risk_we_excess_allowance_pct,
-                unstuck_threshold: bot.unstuck_threshold,
-                unstuck_close_pct: bot.unstuck_close_pct,
-                unstuck_ema_dist: bot.unstuck_ema_dist,
-                ema_band_upper: ema_bands.upper,
-                ema_band_lower: ema_bands.lower,
-                current_price: sym.order_book.ask,
-                price_step: sym.exchange.price_step,
-                qty_step: sym.exchange.qty_step,
-                min_qty: sym.exchange.min_qty,
-                min_cost: sym.exchange.min_cost,
-                c_mult: sym.exchange.c_mult,
-            });
-        }
-        for s in per_short.iter().filter_map(|v| v.as_ref()) {
-            if matches!(s.mode, TradingMode::Manual | TradingMode::Panic) || s.pos.size == 0.0 {
-                continue;
-            }
-            let sym = &input.symbols[s.symbol_idx];
-            let bot = &sym.short.bot_params;
-            let enabled = bot.unstuck_loss_allowance_pct > 0.0
-                && bot.unstuck_close_pct > 0.0
-                && bot.unstuck_threshold > 0.0;
-            if !enabled {
-                continue;
-            }
-            let ema_bands = derive_ema_bands(s.symbol_idx, &sym.emas, bot)?;
-            workspace.unstuck_inputs.push(UnstuckPositionInput {
-                idx: s.symbol_idx,
-                side: SHORT,
-                position_size: s.pos.size,
-                position_price: s.pos.price,
-                wallet_exposure_limit: bot.wallet_exposure_limit,
-                risk_we_excess_allowance_pct: bot.risk_we_excess_allowance_pct,
-                unstuck_threshold: bot.unstuck_threshold,
-                unstuck_close_pct: bot.unstuck_close_pct,
-                unstuck_ema_dist: bot.unstuck_ema_dist,
-                ema_band_upper: ema_bands.upper,
-                ema_band_lower: ema_bands.lower,
-                current_price: sym.order_book.bid,
-                price_step: sym.exchange.price_step,
-                qty_step: sym.exchange.qty_step,
-                min_qty: sym.exchange.min_qty,
-                min_cost: sym.exchange.min_cost,
-                c_mult: sym.exchange.c_mult,
-            });
-        }
-        if let Some((idx, side, order)) = calc_unstucking_action(
-            input_balance_raw(input),
-            input.global.unstuck_allowance_long,
-            input.global.unstuck_allowance_short,
-            &workspace.unstuck_inputs,
-        ) {
-            let ideal = IdealOrder {
-                symbol_idx: idx,
-                pside: if side == LONG {
-                    PositionSide::Long
-                } else {
-                    PositionSide::Short
-                },
-                qty: order.qty,
-                price: order.price,
-                order_type: order.order_type,
-            };
-            match ideal.pside {
-                PositionSide::Long => {
-                    if let Some(s) = per_long.get_mut(idx).and_then(|v| v.as_mut()) {
-                        s.closes.push(ideal);
-                    }
-                }
-                PositionSide::Short => {
-                    if let Some(s) = per_short.get_mut(idx).and_then(|v| v.as_mut()) {
-                        s.closes.push(ideal);
-                    }
-                }
-            }
-        }
-
-        // TWEL enforcer: add auto-reduce closes in addition to normal closes.
-        if enabled_long {
-            workspace.twel_positions.clear();
-            for s in per_long.iter().filter_map(|v| v.as_ref()) {
-                if matches!(s.mode, TradingMode::Manual | TradingMode::Panic) || s.pos.size == 0.0 {
-                    continue;
-                }
-                // Skip TWEL enforcer for positions already running WEL auto-reduce.
-                if s.closes
-                    .iter()
-                    .any(|o| o.order_type == OrderType::CloseAutoReduceWelLong)
-                {
-                    continue;
-                }
-                let sym = &input.symbols[s.symbol_idx];
-                let bot = &sym.long.bot_params;
-                workspace.twel_positions.push(TwelEnforcerInputPosition {
-                    idx: s.symbol_idx,
-                    position_size: s.pos.size,
-                    position_price: s.pos.price,
-                    market_price: sym.order_book.bid,
-                    base_wallet_exposure_limit: bot.wallet_exposure_limit,
-                    c_mult: sym.exchange.c_mult,
-                    qty_step: sym.exchange.qty_step,
-                    price_step: sym.exchange.price_step,
-                    min_qty: sym.exchange.min_qty,
-                    min_cost: sym.exchange.min_cost,
-                });
-            }
-            let actions = calc_twel_enforcer_actions(
-                LONG,
-                input
-                    .global
-                    .global_bot_params
-                    .long
-                    .risk_twel_enforcer_threshold,
-                input
-                    .global
-                    .global_bot_params
-                    .long
-                    .total_wallet_exposure_limit,
-                enp_long,
-                input_balance_raw(input),
-                &workspace.twel_positions,
-                None,
-            );
-            for (idx, order) in actions {
-                if let Some(s) = per_long.get_mut(idx).and_then(|v| v.as_mut()) {
-                    s.closes.push(IdealOrder {
-                        symbol_idx: idx,
-                        pside: PositionSide::Long,
-                        qty: order.qty,
-                        price: order.price,
-                        order_type: order.order_type,
-                    });
-                }
-            }
-        }
-        if enabled_short {
-            workspace.twel_positions.clear();
-            for s in per_short.iter().filter_map(|v| v.as_ref()) {
-                if matches!(s.mode, TradingMode::Manual | TradingMode::Panic) || s.pos.size == 0.0 {
-                    continue;
-                }
-                if s.closes
-                    .iter()
-                    .any(|o| o.order_type == OrderType::CloseAutoReduceWelShort)
-                {
-                    continue;
-                }
-                let sym = &input.symbols[s.symbol_idx];
-                let bot = &sym.short.bot_params;
-                workspace.twel_positions.push(TwelEnforcerInputPosition {
-                    idx: s.symbol_idx,
-                    position_size: s.pos.size,
-                    position_price: s.pos.price,
-                    market_price: sym.order_book.ask,
-                    base_wallet_exposure_limit: bot.wallet_exposure_limit,
-                    c_mult: sym.exchange.c_mult,
-                    qty_step: sym.exchange.qty_step,
-                    price_step: sym.exchange.price_step,
-                    min_qty: sym.exchange.min_qty,
-                    min_cost: sym.exchange.min_cost,
-                });
-            }
-            let actions = calc_twel_enforcer_actions(
-                SHORT,
-                input
-                    .global
-                    .global_bot_params
-                    .short
-                    .risk_twel_enforcer_threshold,
-                input
-                    .global
-                    .global_bot_params
-                    .short
-                    .total_wallet_exposure_limit,
-                enp_short,
-                input_balance_raw(input),
-                &workspace.twel_positions,
-                None,
-            );
-            for (idx, order) in actions {
-                if let Some(s) = per_short.get_mut(idx).and_then(|v| v.as_mut()) {
-                    s.closes.push(IdealOrder {
-                        symbol_idx: idx,
-                        pside: PositionSide::Short,
-                        qty: order.qty,
-                        price: order.price,
-                        order_type: order.order_type,
-                    });
-                }
-            }
-        }
+        // Unstuck and TWEL auto-reduce removed (Pass 2 DCA cleanup).
 
         // Trim closes per symbol to position size (furthest-first).
         for s in per_long.iter_mut().filter_map(|v| v.as_mut()) {

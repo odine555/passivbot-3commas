@@ -401,28 +401,8 @@ impl ForagerScoreWeights {
 #[derive(Clone, Default, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BotParams {
-    pub close_grid_markup_end: f64,
-    pub close_grid_markup_start: f64,
-    pub close_grid_qty_pct: f64,
-    pub close_trailing_retracement_pct: f64,
-    pub close_trailing_grid_ratio: f64,
-    pub close_trailing_qty_pct: f64,
-    pub close_trailing_threshold_pct: f64,
-    pub entry_grid_double_down_factor: f64,
-    pub entry_grid_spacing_volatility_weight: f64,
-    pub entry_grid_spacing_we_weight: f64,
-    pub entry_grid_spacing_pct: f64,
-    pub entry_volatility_ema_span_hours: f64,
     pub entry_initial_ema_dist: f64,
     pub entry_initial_qty_pct: f64,
-    pub entry_trailing_double_down_factor: f64,
-    pub entry_trailing_retracement_pct: f64,
-    pub entry_trailing_retracement_we_weight: f64,
-    pub entry_trailing_retracement_volatility_weight: f64,
-    pub entry_trailing_grid_ratio: f64,
-    pub entry_trailing_threshold_pct: f64,
-    pub entry_trailing_threshold_we_weight: f64,
-    pub entry_trailing_threshold_volatility_weight: f64,
     pub filter_volatility_ema_span: f64,
     pub filter_volume_ema_span: f64,
     #[serde(default, skip_serializing, rename = "filter_volatility_drop_pct")]
@@ -453,14 +433,7 @@ pub struct BotParams {
     pub hsl_panic_close_order_type: String,
     pub n_positions: usize,
     pub total_wallet_exposure_limit: f64,
-    pub wallet_exposure_limit: f64, // per-position base limit (without excess allowance)
-    pub risk_wel_enforcer_threshold: f64,
-    pub risk_twel_enforcer_threshold: f64,
-    pub risk_we_excess_allowance_pct: f64,
-    pub unstuck_close_pct: f64,
-    pub unstuck_ema_dist: f64,
-    pub unstuck_loss_allowance_pct: f64,
-    pub unstuck_threshold: f64,
+    pub wallet_exposure_limit: f64, // per-position base limit (hard ceiling)
     #[serde(default = "default_dca_price_deviation_pct")]
     pub dca_price_deviation_pct: f64,
     #[serde(default = "default_dca_step_scale")]

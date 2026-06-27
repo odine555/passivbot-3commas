@@ -9,8 +9,7 @@ use crate::entries::{
 };
 use crate::equity_hard_stop_loss as ehsl;
 use crate::risk::{
-    calc_twel_enforcer_actions, calc_unstucking_action, gate_entries_by_twel, GateEntriesCandidate,
-    GateEntriesDecision, GateEntriesPosition, TwelEnforcerInputPosition, UnstuckPositionInput,
+    gate_entries_by_twel, GateEntriesCandidate, GateEntriesDecision, GateEntriesPosition,
 };
 use crate::trailing::{
     trailing_bundle_to_tuple, tuple_to_trailing_bundle, update_trailing_bundle_sequence,
@@ -636,124 +635,6 @@ pub fn gate_entries_by_twel_py(
         result.push((idx, qty, price, order_type.id()));
     }
     Ok(result)
-}
-
-#[pyfunction]
-pub fn calc_unstucking_close_py(
-    balance: f64,
-    allowance_long: f64,
-    allowance_short: f64,
-    positions: &Bound<'_, PyList>,
-) -> PyResult<Option<(usize, usize, f64, f64, u16)>> {
-    let positions = positions.as_ref();
-    let positions_len = positions.len()?;
-    let mut inputs: Vec<UnstuckPositionInput> = Vec::with_capacity(positions_len);
-    for item in positions.iter()? {
-        let item = item?;
-        let dict = item.downcast::<PyDict>()?;
-        let idx = dict
-            .get_item("idx")?
-            .ok_or_else(|| PyValueError::new_err("position missing 'idx'"))?
-            .extract::<usize>()?;
-        let side_str: String = dict
-            .get_item("side")?
-            .ok_or_else(|| PyValueError::new_err("position missing 'side'"))?
-            .extract::<String>()?;
-        let side = match side_str.as_str() {
-            "long" => LONG,
-            "short" => SHORT,
-            _ => {
-                return Err(PyValueError::new_err(
-                    "position side must be 'long' or 'short'",
-                ))
-            }
-        };
-        let position_size = dict
-            .get_item("position_size")?
-            .ok_or_else(|| PyValueError::new_err("position missing 'position_size'"))?
-            .extract::<f64>()?;
-        let position_price = dict
-            .get_item("position_price")?
-            .ok_or_else(|| PyValueError::new_err("position missing 'position_price'"))?
-            .extract::<f64>()?;
-        let wallet_exposure_limit = dict
-            .get_item("wallet_exposure_limit")?
-            .ok_or_else(|| PyValueError::new_err("position missing 'wallet_exposure_limit'"))?
-            .extract::<f64>()?;
-        let risk_we_excess_allowance_pct = dict
-            .get_item("risk_we_excess_allowance_pct")?
-            .ok_or_else(|| {
-                PyValueError::new_err("position missing 'risk_we_excess_allowance_pct'")
-            })?
-            .extract::<f64>()?;
-        let unstuck_threshold = dict
-            .get_item("unstuck_threshold")?
-            .ok_or_else(|| PyValueError::new_err("position missing 'unstuck_threshold'"))?
-            .extract::<f64>()?;
-        let unstuck_close_pct = dict
-            .get_item("unstuck_close_pct")?
-            .ok_or_else(|| PyValueError::new_err("position missing 'unstuck_close_pct'"))?
-            .extract::<f64>()?;
-        let unstuck_ema_dist = dict
-            .get_item("unstuck_ema_dist")?
-            .ok_or_else(|| PyValueError::new_err("position missing 'unstuck_ema_dist'"))?
-            .extract::<f64>()?;
-        let ema_band_upper = dict
-            .get_item("ema_band_upper")?
-            .ok_or_else(|| PyValueError::new_err("position missing 'ema_band_upper'"))?
-            .extract::<f64>()?;
-        let ema_band_lower = dict
-            .get_item("ema_band_lower")?
-            .ok_or_else(|| PyValueError::new_err("position missing 'ema_band_lower'"))?
-            .extract::<f64>()?;
-        let current_price = dict
-            .get_item("current_price")?
-            .ok_or_else(|| PyValueError::new_err("position missing 'current_price'"))?
-            .extract::<f64>()?;
-        let price_step = dict
-            .get_item("price_step")?
-            .ok_or_else(|| PyValueError::new_err("position missing 'price_step'"))?
-            .extract::<f64>()?;
-        let qty_step = dict
-            .get_item("qty_step")?
-            .ok_or_else(|| PyValueError::new_err("position missing 'qty_step'"))?
-            .extract::<f64>()?;
-        let min_qty = dict
-            .get_item("min_qty")?
-            .ok_or_else(|| PyValueError::new_err("position missing 'min_qty'"))?
-            .extract::<f64>()?;
-        let min_cost = dict
-            .get_item("min_cost")?
-            .ok_or_else(|| PyValueError::new_err("position missing 'min_cost'"))?
-            .extract::<f64>()?;
-        let c_mult = dict
-            .get_item("c_mult")?
-            .ok_or_else(|| PyValueError::new_err("position missing 'c_mult'"))?
-            .extract::<f64>()?;
-
-        inputs.push(UnstuckPositionInput {
-            idx,
-            side,
-            position_size,
-            position_price,
-            wallet_exposure_limit,
-            risk_we_excess_allowance_pct,
-            unstuck_threshold,
-            unstuck_close_pct,
-            unstuck_ema_dist,
-            ema_band_upper,
-            ema_band_lower,
-            current_price,
-            price_step,
-            qty_step,
-            min_qty,
-            min_cost,
-            c_mult,
-        });
-    }
-
-    let result = calc_unstucking_action(balance, allowance_long, allowance_short, &inputs);
-    Ok(result.map(|(idx, side, order)| (idx, side, order.qty, order.price, order.order_type.id())))
 }
 
 #[cfg(test)]
@@ -1390,18 +1271,7 @@ fn bot_params_pair_from_dict(dict: &PyDict) -> PyResult<BotParamsPair> {
     })
 }
 
-fn extract_grid_spacing_we_weight(dict: &PyDict) -> PyResult<f64> {
-    if let Some(obj) = dict.get_item("entry_grid_spacing_we_weight")? {
-        obj.extract::<f64>()
-    } else {
-        extract_value(dict, "entry_grid_spacing_we_weight")
-    }
-}
-
 fn bot_params_from_dict(dict: &PyDict) -> PyResult<BotParams> {
-    let risk_wel_enforcer_threshold: f64 = extract_value(dict, "risk_wel_enforcer_threshold")?;
-    let risk_twel_enforcer_threshold: f64 = extract_value(dict, "risk_twel_enforcer_threshold")?;
-    let risk_we_excess_allowance_pct: f64 = extract_value(dict, "risk_we_excess_allowance_pct")?;
     let total_wallet_exposure_limit: f64 = extract_value(dict, "total_wallet_exposure_limit")?;
     let wallet_exposure_limit_raw: f64 = extract_value(dict, "wallet_exposure_limit")?;
     let n_positions_float: f64 = extract_value(dict, "n_positions")?;
@@ -1427,50 +1297,8 @@ fn bot_params_from_dict(dict: &PyDict) -> PyResult<BotParams> {
     let wallet_exposure_limit = wallet_exposure_limit_raw;
 
     Ok(BotParams {
-        close_grid_markup_end: extract_value(dict, "close_grid_markup_end")?,
-        close_grid_markup_start: extract_value(dict, "close_grid_markup_start")?,
-        close_grid_qty_pct: extract_value(dict, "close_grid_qty_pct")?,
-        close_trailing_retracement_pct: extract_value(dict, "close_trailing_retracement_pct")?,
-        close_trailing_grid_ratio: extract_value(dict, "close_trailing_grid_ratio")?,
-        close_trailing_qty_pct: extract_value(dict, "close_trailing_qty_pct")?,
-        close_trailing_threshold_pct: extract_value(dict, "close_trailing_threshold_pct")?,
-        entry_grid_double_down_factor: extract_value(dict, "entry_grid_double_down_factor")?,
-        entry_grid_spacing_volatility_weight: extract_value(
-            dict,
-            "entry_grid_spacing_volatility_weight",
-        )?,
-        entry_grid_spacing_we_weight: extract_grid_spacing_we_weight(dict)?,
-        entry_grid_spacing_pct: extract_value(dict, "entry_grid_spacing_pct")?,
-        entry_volatility_ema_span_hours: extract_value_with_fallback(
-            dict,
-            "entry_volatility_ema_span_hours",
-            "entry_log_range_ema_span_hours",
-        )?,
         entry_initial_ema_dist: extract_value(dict, "entry_initial_ema_dist")?,
         entry_initial_qty_pct: extract_value(dict, "entry_initial_qty_pct")?,
-        entry_trailing_double_down_factor: extract_value(
-            dict,
-            "entry_trailing_double_down_factor",
-        )?,
-        entry_trailing_retracement_pct: extract_value(dict, "entry_trailing_retracement_pct")?,
-        entry_trailing_retracement_we_weight: extract_value(
-            dict,
-            "entry_trailing_retracement_we_weight",
-        )?,
-        entry_trailing_retracement_volatility_weight: extract_value(
-            dict,
-            "entry_trailing_retracement_volatility_weight",
-        )?,
-        entry_trailing_grid_ratio: extract_value(dict, "entry_trailing_grid_ratio")?,
-        entry_trailing_threshold_pct: extract_value(dict, "entry_trailing_threshold_pct")?,
-        entry_trailing_threshold_we_weight: extract_value(
-            dict,
-            "entry_trailing_threshold_we_weight",
-        )?,
-        entry_trailing_threshold_volatility_weight: extract_value(
-            dict,
-            "entry_trailing_threshold_volatility_weight",
-        )?,
         filter_volatility_ema_span: extract_value_with_fallback(
             dict,
             "forager_volatility_ema_span",
@@ -1515,13 +1343,6 @@ fn bot_params_from_dict(dict: &PyDict) -> PyResult<BotParams> {
         n_positions,
         total_wallet_exposure_limit,
         wallet_exposure_limit,
-        risk_wel_enforcer_threshold,
-        risk_twel_enforcer_threshold,
-        risk_we_excess_allowance_pct,
-        unstuck_close_pct: extract_value(dict, "unstuck_close_pct")?,
-        unstuck_ema_dist: extract_value(dict, "unstuck_ema_dist")?,
-        unstuck_loss_allowance_pct: extract_value(dict, "unstuck_loss_allowance_pct")?,
-        unstuck_threshold: extract_value(dict, "unstuck_threshold")?,
         dca_price_deviation_pct: extract_value_with_default(
             dict,
             "dca_price_deviation_pct",
@@ -1664,22 +1485,9 @@ pub fn calc_next_entry_long_py(
         ..Default::default()
     };
     let bot_params = BotParams {
-        entry_grid_double_down_factor,
-        entry_grid_spacing_volatility_weight,
-        entry_grid_spacing_we_weight,
-        entry_grid_spacing_pct,
         entry_initial_ema_dist,
         entry_initial_qty_pct,
-        entry_trailing_double_down_factor,
-        entry_trailing_grid_ratio,
-        entry_trailing_retracement_pct,
-        entry_trailing_retracement_we_weight,
-        entry_trailing_retracement_volatility_weight,
-        entry_trailing_threshold_pct,
-        entry_trailing_threshold_we_weight,
-        entry_trailing_threshold_volatility_weight,
         wallet_exposure_limit,
-        risk_we_excess_allowance_pct,
         ..Default::default()
     };
     let position = Position {
@@ -1752,16 +1560,7 @@ pub fn calc_next_close_long_py(
         ..Default::default()
     };
     let bot_params = BotParams {
-        close_grid_markup_end,
-        close_grid_markup_start,
-        close_grid_qty_pct,
-        close_trailing_grid_ratio,
-        close_trailing_qty_pct,
-        close_trailing_retracement_pct,
-        close_trailing_threshold_pct,
         wallet_exposure_limit,
-        risk_we_excess_allowance_pct,
-        risk_wel_enforcer_threshold,
         ..Default::default()
     };
     let position = Position {
@@ -1846,22 +1645,9 @@ pub fn calc_next_entry_short_py(
         ..Default::default()
     };
     let bot_params = BotParams {
-        entry_grid_double_down_factor,
-        entry_grid_spacing_volatility_weight,
-        entry_grid_spacing_we_weight,
-        entry_grid_spacing_pct,
         entry_initial_ema_dist,
         entry_initial_qty_pct,
-        entry_trailing_double_down_factor,
-        entry_trailing_grid_ratio,
-        entry_trailing_retracement_pct,
-        entry_trailing_retracement_we_weight,
-        entry_trailing_retracement_volatility_weight,
-        entry_trailing_threshold_pct,
-        entry_trailing_threshold_we_weight,
-        entry_trailing_threshold_volatility_weight,
         wallet_exposure_limit,
-        risk_we_excess_allowance_pct,
         ..Default::default()
     };
     let position = Position {
@@ -1934,16 +1720,7 @@ pub fn calc_next_close_short_py(
         ..Default::default()
     };
     let bot_params = BotParams {
-        close_grid_markup_end,
-        close_grid_markup_start,
-        close_grid_qty_pct,
-        close_trailing_grid_ratio,
-        close_trailing_qty_pct,
-        close_trailing_retracement_pct,
-        close_trailing_threshold_pct,
         wallet_exposure_limit,
-        risk_we_excess_allowance_pct,
-        risk_wel_enforcer_threshold,
         ..Default::default()
     };
     let position = Position {
@@ -2030,22 +1807,9 @@ pub fn calc_entries_long_py(
     };
 
     let bot_params = BotParams {
-        entry_grid_double_down_factor,
-        entry_grid_spacing_volatility_weight,
-        entry_grid_spacing_we_weight,
-        entry_grid_spacing_pct,
         entry_initial_ema_dist,
         entry_initial_qty_pct,
-        entry_trailing_double_down_factor,
-        entry_trailing_grid_ratio,
-        entry_trailing_retracement_pct,
-        entry_trailing_retracement_we_weight,
-        entry_trailing_retracement_volatility_weight,
-        entry_trailing_threshold_pct,
-        entry_trailing_threshold_we_weight,
-        entry_trailing_threshold_volatility_weight,
         wallet_exposure_limit,
-        risk_we_excess_allowance_pct,
         ..Default::default()
     };
 
@@ -2136,22 +1900,9 @@ pub fn calc_entries_short_py(
     };
 
     let bot_params = BotParams {
-        entry_grid_double_down_factor,
-        entry_grid_spacing_volatility_weight,
-        entry_grid_spacing_we_weight,
-        entry_grid_spacing_pct,
         entry_initial_ema_dist,
         entry_initial_qty_pct,
-        entry_trailing_double_down_factor,
-        entry_trailing_grid_ratio,
-        entry_trailing_retracement_pct,
-        entry_trailing_retracement_we_weight,
-        entry_trailing_retracement_volatility_weight,
-        entry_trailing_threshold_pct,
-        entry_trailing_threshold_we_weight,
-        entry_trailing_threshold_volatility_weight,
         wallet_exposure_limit,
-        risk_we_excess_allowance_pct,
         ..Default::default()
     };
 
@@ -2246,16 +1997,7 @@ pub fn calc_closes_long_py(
     };
 
     let bot_params = BotParams {
-        close_grid_markup_end,
-        close_grid_markup_start,
-        close_grid_qty_pct,
-        close_trailing_grid_ratio,
-        close_trailing_qty_pct,
-        close_trailing_retracement_pct,
-        close_trailing_threshold_pct,
         wallet_exposure_limit,
-        risk_we_excess_allowance_pct,
-        risk_wel_enforcer_threshold,
         ..Default::default()
     };
 
@@ -2329,16 +2071,7 @@ pub fn calc_closes_short_py(
     };
 
     let bot_params = BotParams {
-        close_grid_markup_end,
-        close_grid_markup_start,
-        close_grid_qty_pct,
-        close_trailing_grid_ratio,
-        close_trailing_qty_pct,
-        close_trailing_retracement_pct,
-        close_trailing_threshold_pct,
         wallet_exposure_limit,
-        risk_we_excess_allowance_pct,
-        risk_wel_enforcer_threshold,
         ..Default::default()
     };
     let position = Position {
@@ -2364,102 +2097,6 @@ pub fn calc_closes_short_py(
         .into_iter()
         .map(|order| (order.qty, order.price, order.order_type.id()))
         .collect()
-}
-
-#[pyfunction]
-pub fn calc_twel_enforcer_orders_py(
-    side: &str,
-    red_threshold: f64,
-    total_wallet_exposure_limit: f64,
-    effective_n_positions: usize,
-    balance: f64,
-    positions: &Bound<'_, PyList>,
-    skip_idx: Option<usize>,
-) -> PyResult<Vec<(usize, f64, f64, u16)>> {
-    let positions = positions.as_ref();
-    let side_code = match side {
-        "long" => LONG,
-        "short" => SHORT,
-        _ => {
-            return Err(PyValueError::new_err(
-                "side must be either 'long' or 'short'",
-            ))
-        }
-    };
-    let positions_len = positions.len()?;
-    let mut parsed_positions: Vec<TwelEnforcerInputPosition> = Vec::with_capacity(positions_len);
-    for item in positions.iter()? {
-        let item = item?;
-        let dict = item.downcast::<PyDict>()?;
-        parsed_positions.push(TwelEnforcerInputPosition {
-            idx: dict
-                .get_item("idx")?
-                .ok_or_else(|| PyValueError::new_err("twel enforcer position missing 'idx'"))?
-                .extract::<usize>()?,
-            position_size: dict
-                .get_item("position_size")?
-                .ok_or_else(|| {
-                    PyValueError::new_err("twel enforcer position missing 'position_size'")
-                })?
-                .extract::<f64>()?,
-            position_price: dict
-                .get_item("position_price")?
-                .ok_or_else(|| {
-                    PyValueError::new_err("twel enforcer position missing 'position_price'")
-                })?
-                .extract::<f64>()?,
-            market_price: dict
-                .get_item("market_price")?
-                .ok_or_else(|| {
-                    PyValueError::new_err("twel enforcer position missing 'market_price'")
-                })?
-                .extract::<f64>()?,
-            base_wallet_exposure_limit: dict
-                .get_item("base_wallet_exposure_limit")?
-                .ok_or_else(|| {
-                    PyValueError::new_err(
-                        "twel enforcer position missing 'base_wallet_exposure_limit'",
-                    )
-                })?
-                .extract::<f64>()?,
-            c_mult: dict
-                .get_item("c_mult")?
-                .ok_or_else(|| PyValueError::new_err("twel enforcer position missing 'c_mult'"))?
-                .extract::<f64>()?,
-            qty_step: dict
-                .get_item("qty_step")?
-                .ok_or_else(|| PyValueError::new_err("twel enforcer position missing 'qty_step'"))?
-                .extract::<f64>()?,
-            price_step: dict
-                .get_item("price_step")?
-                .ok_or_else(|| {
-                    PyValueError::new_err("twel enforcer position missing 'price_step'")
-                })?
-                .extract::<f64>()?,
-            min_qty: dict
-                .get_item("min_qty")?
-                .ok_or_else(|| PyValueError::new_err("twel enforcer position missing 'min_qty'"))?
-                .extract::<f64>()?,
-            min_cost: dict
-                .get_item("min_cost")?
-                .ok_or_else(|| PyValueError::new_err("twel enforcer position missing 'min_cost'"))?
-                .extract::<f64>()?,
-        });
-    }
-
-    let actions = calc_twel_enforcer_actions(
-        side_code,
-        red_threshold,
-        total_wallet_exposure_limit,
-        effective_n_positions,
-        balance,
-        &parsed_positions,
-        skip_idx,
-    );
-    Ok(actions
-        .into_iter()
-        .map(|(idx, order)| (idx, order.qty, order.price, order.order_type.id()))
-        .collect())
 }
 
 #[pyfunction]
