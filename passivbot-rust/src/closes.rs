@@ -384,119 +384,27 @@ pub fn calc_trailing_close_long(
     }
 }
 
+// DCA Pass 1: single full-size take-profit close at avg * (1 + dca_take_profit_pct).
+// Old trailing/grid close helpers above are kept (dead) for Pass 2 cleanup.
 pub fn calc_next_close_long(
     exchange_params: &ExchangeParams,
-    state_params: &StateParams,
+    _state_params: &StateParams,
     bot_params: &BotParams,
     position: &Position,
-    trailing_price_bundle: &TrailingPriceBundle,
+    _trailing_price_bundle: &TrailingPriceBundle,
 ) -> Order {
-    if position.size == 0.0 {
+    if position.size <= 0.0 {
         // no position
         return Order::default();
     }
-    let wallet_exposure = calc_wallet_exposure(
-        exchange_params.c_mult,
-        state_params.balance,
-        position.size,
-        position.price,
+    let tp_price = round_up(
+        position.price * (1.0 + bot_params.dca_take_profit_pct),
+        exchange_params.price_step,
     );
-    if let Some(order) = calc_wel_auto_reduce_long(
-        exchange_params,
-        state_params,
-        bot_params,
-        position,
-        wallet_exposure,
-    ) {
-        return order;
-    }
-    let wallet_exposure_ratio = if wallet_exposure_limit_with_allowance(bot_params) <= 0.0 {
-        10.0
-    } else {
-        wallet_exposure / wallet_exposure_limit_with_allowance(bot_params)
-    };
-    if bot_params.close_trailing_grid_ratio >= 1.0 || bot_params.close_trailing_grid_ratio <= -1.0 {
-        // return trailing only
-        return calc_trailing_close_long(
-            &exchange_params,
-            &state_params,
-            &bot_params,
-            &position,
-            &trailing_price_bundle,
-        );
-    }
-    if bot_params.close_trailing_grid_ratio == 0.0 {
-        // return grid only
-        return calc_grid_close_long(&exchange_params, &state_params, &bot_params, &position);
-    }
-    if bot_params.close_trailing_grid_ratio > 0.0 {
-        // trailing first
-        if wallet_exposure_ratio < bot_params.close_trailing_grid_ratio {
-            // return trailing order
-            calc_trailing_close_long(
-                &exchange_params,
-                &state_params,
-                &bot_params,
-                &position,
-                &trailing_price_bundle,
-            )
-        } else {
-            // return grid order, but leave full_psize * close_trailing_grid_ratio for trailing close
-            let mut trailing_allocation = cost_to_qty(
-                state_params.balance
-                    * wallet_exposure_limit_with_allowance(bot_params)
-                    * bot_params.close_trailing_grid_ratio,
-                position.price,
-                exchange_params.c_mult,
-            );
-            let min_entry_qty = calc_min_entry_qty(position.price, &exchange_params);
-            if trailing_allocation < min_entry_qty {
-                trailing_allocation = 0.0;
-            }
-            let grid_allocation = round_(
-                (position.size - trailing_allocation) * 1.01, // add 1% to avoid hitting the threshold exactly
-                exchange_params.qty_step,
-            );
-            let position_mod = Position {
-                size: f64::min(position.size, f64::max(grid_allocation, min_entry_qty)),
-                price: position.price,
-            };
-            calc_grid_close_long(&exchange_params, &state_params, &bot_params, &position_mod)
-        }
-    } else {
-        // grid first
-        if wallet_exposure_ratio < 1.0 + bot_params.close_trailing_grid_ratio {
-            // return grid order, closing whole position
-            calc_grid_close_long(&exchange_params, &state_params, &bot_params, &position)
-        } else {
-            // return trailing order, but leave full_psize * (1.0 + close_trailing_grid_ratio) for grid close
-            let mut grid_allocation = cost_to_qty(
-                state_params.balance
-                    * wallet_exposure_limit_with_allowance(bot_params)
-                    * (1.0 + bot_params.close_trailing_grid_ratio),
-                position.price,
-                exchange_params.c_mult,
-            );
-            let min_entry_qty = calc_min_entry_qty(position.price, &exchange_params);
-            if grid_allocation < min_entry_qty {
-                grid_allocation = 0.0;
-            }
-            let trailing_allocation = round_(
-                (position.size - grid_allocation) * 1.01,
-                exchange_params.qty_step,
-            );
-            let position_mod = Position {
-                size: f64::min(position.size, f64::max(trailing_allocation, min_entry_qty)),
-                price: position.price,
-            };
-            calc_trailing_close_long(
-                &exchange_params,
-                &state_params,
-                &bot_params,
-                &position_mod,
-                &trailing_price_bundle,
-            )
-        }
+    Order {
+        qty: -round_(position.size, exchange_params.qty_step),
+        price: tp_price,
+        order_type: OrderType::CloseGridLong,
     }
 }
 
@@ -677,123 +585,27 @@ pub fn calc_trailing_close_short(
     }
 }
 
+// DCA Pass 1: single full-size take-profit close at avg * (1 - dca_take_profit_pct).
 pub fn calc_next_close_short(
     exchange_params: &ExchangeParams,
-    state_params: &StateParams,
+    _state_params: &StateParams,
     bot_params: &BotParams,
     position: &Position,
-    trailing_price_bundle: &TrailingPriceBundle,
+    _trailing_price_bundle: &TrailingPriceBundle,
 ) -> Order {
     let position_size_abs = position.size.abs();
     if position_size_abs == 0.0 {
         // no position
         return Order::default();
     }
-    let wallet_exposure = calc_wallet_exposure(
-        exchange_params.c_mult,
-        state_params.balance,
-        position_size_abs,
-        position.price,
+    let tp_price = round_dn(
+        position.price * (1.0 - bot_params.dca_take_profit_pct),
+        exchange_params.price_step,
     );
-    if let Some(order) = calc_wel_auto_reduce_short(
-        exchange_params,
-        state_params,
-        bot_params,
-        position,
-        wallet_exposure,
-    ) {
-        return order;
-    }
-    if bot_params.close_trailing_grid_ratio >= 1.0 || bot_params.close_trailing_grid_ratio <= -1.0 {
-        // return trailing only
-        return calc_trailing_close_short(
-            &exchange_params,
-            &state_params,
-            &bot_params,
-            &position,
-            &trailing_price_bundle,
-        );
-    }
-    if bot_params.close_trailing_grid_ratio == 0.0 {
-        // return grid only
-        return calc_grid_close_short(&exchange_params, &state_params, &bot_params, &position);
-    }
-    let wallet_exposure_ratio = calc_wallet_exposure(
-        exchange_params.c_mult,
-        state_params.balance,
-        position_size_abs,
-        position.price,
-    ) / wallet_exposure_limit_with_allowance(bot_params);
-    if bot_params.close_trailing_grid_ratio > 0.0 {
-        // trailing first
-        if wallet_exposure_ratio < bot_params.close_trailing_grid_ratio {
-            // return trailing order, closing whole pos
-            calc_trailing_close_short(
-                &exchange_params,
-                &state_params,
-                &bot_params,
-                &position,
-                &trailing_price_bundle,
-            )
-        } else {
-            // return grid order, but leave full_psize * close_trailing_grid_ratio for trailing close
-            let mut trailing_allocation = cost_to_qty(
-                state_params.balance
-                    * wallet_exposure_limit_with_allowance(bot_params)
-                    * bot_params.close_trailing_grid_ratio,
-                position.price,
-                exchange_params.c_mult,
-            );
-            let min_entry_qty = calc_min_entry_qty(position.price, &exchange_params);
-            if trailing_allocation < min_entry_qty {
-                trailing_allocation = 0.0;
-            }
-            let grid_allocation = round_(
-                (position_size_abs - trailing_allocation) * 1.01,
-                exchange_params.qty_step,
-            );
-            let position_mod = Position {
-                size: -f64::min(position_size_abs, f64::max(grid_allocation, min_entry_qty)),
-                price: position.price,
-            };
-            calc_grid_close_short(&exchange_params, &state_params, &bot_params, &position_mod)
-        }
-    } else {
-        if wallet_exposure_ratio < 1.0 + bot_params.close_trailing_grid_ratio {
-            // return grid order, closing whole position
-            return calc_grid_close_short(&exchange_params, &state_params, &bot_params, &position);
-        } else {
-            // return trailing order, but leave full_psize * (1.0 + close_trailing_grid_ratio) for grid close
-            let mut grid_allocation = cost_to_qty(
-                state_params.balance
-                    * wallet_exposure_limit_with_allowance(bot_params)
-                    * (1.0 + bot_params.close_trailing_grid_ratio),
-                position.price,
-                exchange_params.c_mult,
-            );
-            let min_entry_qty = calc_min_entry_qty(position.price, &exchange_params);
-            if grid_allocation < min_entry_qty {
-                grid_allocation = 0.0;
-            }
-            let trailing_allocation = round_(
-                (position_size_abs - grid_allocation) * 1.01,
-                exchange_params.qty_step,
-            );
-            let position_mod = Position {
-                size: -f64::min(
-                    position_size_abs,
-                    f64::max(trailing_allocation, min_entry_qty),
-                ),
-                price: position.price,
-            };
-            calc_trailing_close_short(
-                &exchange_params,
-                &state_params,
-                &bot_params,
-                &position_mod,
-                &trailing_price_bundle,
-            )
-        }
+    Order {
+        qty: round_(position_size_abs, exchange_params.qty_step),
+        price: tp_price,
+        order_type: OrderType::CloseGridShort,
     }
 }
 
@@ -886,6 +698,7 @@ mod tests {
     }
 }
 
+// DCA Pass 1: exactly one full-size take-profit close (or empty if flat).
 pub fn calc_closes_long(
     exchange_params: &ExchangeParams,
     state_params: &StateParams,
@@ -893,73 +706,33 @@ pub fn calc_closes_long(
     position: &Position,
     trailing_price_bundle: &TrailingPriceBundle,
 ) -> Vec<Order> {
-    let mut closes = Vec::<Order>::new();
-    let mut psize = position.size;
-    for _ in 0..500 {
-        let position_mod = Position {
-            size: psize,
-            price: position.price,
-        };
-        let mut close = calc_next_close_long(
-            exchange_params,
-            &state_params,
-            bot_params,
-            &position_mod,
-            &trailing_price_bundle,
-        );
-        close.price = quantize_price(
-            close.price,
-            exchange_params.price_step,
-            RoundingMode::Nearest,
-            "calc_closes_long::price",
-        );
-        close.qty = quantize_qty(
-            close.qty,
-            exchange_params.qty_step,
-            RoundingMode::Nearest,
-            "calc_closes_long::qty",
-        );
-        if close.qty == 0.0 {
-            break;
-        }
-        psize = round_(psize + close.qty, exchange_params.qty_step);
-        if !closes.is_empty() {
-            if close.order_type == OrderType::CloseTrailingLong {
-                break;
-            }
-            if closes[closes.len() - 1].price == close.price {
-                let previous_close = closes.pop();
-                let merged_close = Order {
-                    qty: round_(
-                        previous_close.unwrap().qty + close.qty,
-                        exchange_params.qty_step,
-                    ),
-                    price: close.price,
-                    order_type: close.order_type,
-                };
-                let mut merged_close = merged_close;
-                merged_close.price = quantize_price(
-                    merged_close.price,
-                    exchange_params.price_step,
-                    RoundingMode::Nearest,
-                    "calc_closes_long::merged_price",
-                );
-                merged_close.qty = quantize_qty(
-                    merged_close.qty,
-                    exchange_params.qty_step,
-                    RoundingMode::Nearest,
-                    "calc_closes_long::merged_qty",
-                );
-                closes.push(merged_close);
-                continue;
-            }
-        }
-        closes.push(close);
+    let mut close = calc_next_close_long(
+        exchange_params,
+        state_params,
+        bot_params,
+        position,
+        trailing_price_bundle,
+    );
+    close.price = quantize_price(
+        close.price,
+        exchange_params.price_step,
+        RoundingMode::Nearest,
+        "calc_closes_long::price",
+    );
+    close.qty = quantize_qty(
+        close.qty,
+        exchange_params.qty_step,
+        RoundingMode::Nearest,
+        "calc_closes_long::qty",
+    );
+    if close.qty == 0.0 {
+        Vec::new()
+    } else {
+        vec![close]
     }
-    closes.sort_by(|a, b| a.price.partial_cmp(&b.price).unwrap());
-    closes
 }
 
+// DCA Pass 1: exactly one full-size take-profit close (or empty if flat).
 pub fn calc_closes_short(
     exchange_params: &ExchangeParams,
     state_params: &StateParams,
@@ -967,69 +740,28 @@ pub fn calc_closes_short(
     position: &Position,
     trailing_price_bundle: &TrailingPriceBundle,
 ) -> Vec<Order> {
-    let mut closes = Vec::<Order>::new();
-    let mut psize = position.size;
-    for _ in 0..500 {
-        let position_mod = Position {
-            size: psize,
-            price: position.price,
-        };
-        let mut close = calc_next_close_short(
-            exchange_params,
-            &state_params,
-            bot_params,
-            &position_mod,
-            &trailing_price_bundle,
-        );
-        close.price = quantize_price(
-            close.price,
-            exchange_params.price_step,
-            RoundingMode::Nearest,
-            "calc_closes_short::price",
-        );
-        close.qty = quantize_qty(
-            close.qty,
-            exchange_params.qty_step,
-            RoundingMode::Nearest,
-            "calc_closes_short::qty",
-        );
-        if close.qty == 0.0 {
-            break;
-        }
-        psize = round_(psize + close.qty, exchange_params.qty_step);
-        if !closes.is_empty() {
-            if close.order_type == OrderType::CloseTrailingShort {
-                break;
-            }
-            if closes[closes.len() - 1].price == close.price {
-                let previous_close = closes.pop();
-                let merged_close = Order {
-                    qty: round_(
-                        previous_close.unwrap().qty + close.qty,
-                        exchange_params.qty_step,
-                    ),
-                    price: close.price,
-                    order_type: close.order_type,
-                };
-                let mut merged_close = merged_close;
-                merged_close.price = quantize_price(
-                    merged_close.price,
-                    exchange_params.price_step,
-                    RoundingMode::Nearest,
-                    "calc_closes_short::merged_price",
-                );
-                merged_close.qty = quantize_qty(
-                    merged_close.qty,
-                    exchange_params.qty_step,
-                    RoundingMode::Nearest,
-                    "calc_closes_short::merged_qty",
-                );
-                closes.push(merged_close);
-                continue;
-            }
-        }
-        closes.push(close);
+    let mut close = calc_next_close_short(
+        exchange_params,
+        state_params,
+        bot_params,
+        position,
+        trailing_price_bundle,
+    );
+    close.price = quantize_price(
+        close.price,
+        exchange_params.price_step,
+        RoundingMode::Nearest,
+        "calc_closes_short::price",
+    );
+    close.qty = quantize_qty(
+        close.qty,
+        exchange_params.qty_step,
+        RoundingMode::Nearest,
+        "calc_closes_short::qty",
+    );
+    if close.qty == 0.0 {
+        Vec::new()
+    } else {
+        vec![close]
     }
-    closes.sort_by(|a, b| b.price.partial_cmp(&a.price).unwrap());
-    closes
 }

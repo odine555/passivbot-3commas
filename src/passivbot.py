@@ -9938,6 +9938,12 @@ class Passivbot:
             "close_trailing_grid_ratio",
             "close_trailing_qty_pct",
             "close_trailing_threshold_pct",
+            "dca_price_deviation_pct",
+            "dca_step_scale",
+            "dca_volume_scale",
+            "dca_so1_ratio",
+            "dca_max_safety_orders",
+            "dca_take_profit_pct",
             "entry_grid_double_down_factor",
             "entry_grid_spacing_volatility_weight",
             "entry_grid_spacing_we_weight",
@@ -10225,6 +10231,84 @@ class Passivbot:
         """Calculate unstuck allowances using FillEventsManager."""
         return self._calc_unstuck_allowances(allow_new_unstuck)
 
+    def _dca_state_for_position(
+        self, symbol: str, pside: str, pos: dict
+    ) -> dict:
+        """Derive 3commas-DCA per-position state for the orchestrator input.
+
+        Returns a dict with two float keys matching the Rust ``SymbolSideInput``
+        serde names:
+          - ``dca_base_price``: price of the EARLIEST entry fill of the CURRENT
+            open position (the base-order / BO fill price).
+          - ``dca_entry_fills``: number of entry fills since the position last
+            opened from flat (BO counts as 1).
+
+        Current-position-cycle boundary: walk this symbol+side's fills in
+        chronological order, accumulating entry fills; whenever the post-fill
+        position size returns to flat (a close-to-flat) the accumulator resets,
+        so what remains after the final fill is exactly the entry fills of the
+        currently-open cycle.
+
+        Flat position -> {0.0, 0.0}. If an open position has no usable fill
+        history (e.g. restart with an empty/partial fill cache), fall back to
+        {position avg price, 1.0} so the bot places the next safety order off the
+        average price instead of crashing or spamming orders.
+        """
+        try:
+            psize_now = float(pos.get("size", 0.0) or 0.0)
+        except Exception:
+            psize_now = 0.0
+        if psize_now == 0.0:
+            return {"dca_base_price": 0.0, "dca_entry_fills": 0.0}
+
+        try:
+            avg_price = float(pos.get("price", 0.0) or 0.0)
+        except Exception:
+            avg_price = 0.0
+
+        manager = getattr(self, "_pnls_manager", None)
+        entries: list = []
+        if manager is not None:
+            try:
+                events = manager.get_events(symbol=symbol)
+            except Exception:
+                events = []
+            side_events = [
+                ev
+                for ev in events
+                if str(getattr(ev, "position_side", "")).lower() == pside
+            ]
+            side_events.sort(key=lambda ev: int(getattr(ev, "timestamp", 0) or 0))
+            eps = 1e-9
+            for ev in side_events:
+                direction = str(getattr(ev, "side", "")).lower()
+                is_entry = (pside == "long" and direction == "buy") or (
+                    pside == "short" and direction == "sell"
+                )
+                if is_entry:
+                    entries.append(ev)
+                try:
+                    after_psize = abs(float(getattr(ev, "psize", 0.0) or 0.0))
+                except Exception:
+                    after_psize = 0.0
+                if after_psize <= eps:
+                    # Position went flat at/after this fill -> fresh cycle.
+                    entries = []
+
+        if entries:
+            base_price = float(getattr(entries[0], "price", 0.0) or 0.0)
+            if base_price > 0.0:
+                return {
+                    "dca_base_price": base_price,
+                    "dca_entry_fills": float(len(entries)),
+                }
+
+        # Fallback: open position with no usable fill history.
+        return {
+            "dca_base_price": avg_price if avg_price > 0.0 else 0.0,
+            "dca_entry_fills": 1.0,
+        }
+
     async def calc_ideal_orders_orchestrator_from_snapshot(
         self, snapshot: dict, *, return_snapshot: bool
     ):
@@ -10340,6 +10424,7 @@ class Passivbot:
                         "min_since_max": float(trailing.get("min_since_max", 0.0)),
                     },
                     "bot_params": self._bot_params_to_rust_dict(pside, symbol),
+                    **self._dca_state_for_position(symbol, pside, pos),
                 }
 
             m1_close_pairs = [
@@ -11320,6 +11405,7 @@ class Passivbot:
                         "min_since_max": float(trailing.get("min_since_max", 0.0)),
                     },
                     "bot_params": self._bot_params_to_rust_dict(pside, symbol),
+                    **self._dca_state_for_position(symbol, pside, pos),
                 }
 
             # Build EMA bundle for this symbol.

@@ -1522,6 +1522,16 @@ fn bot_params_from_dict(dict: &PyDict) -> PyResult<BotParams> {
         unstuck_ema_dist: extract_value(dict, "unstuck_ema_dist")?,
         unstuck_loss_allowance_pct: extract_value(dict, "unstuck_loss_allowance_pct")?,
         unstuck_threshold: extract_value(dict, "unstuck_threshold")?,
+        dca_price_deviation_pct: extract_value_with_default(
+            dict,
+            "dca_price_deviation_pct",
+            0.005,
+        )?,
+        dca_step_scale: extract_value_with_default(dict, "dca_step_scale", 1.0)?,
+        dca_volume_scale: extract_value_with_default(dict, "dca_volume_scale", 1.0)?,
+        dca_so1_ratio: extract_value_with_default(dict, "dca_so1_ratio", 1.0)?,
+        dca_max_safety_orders: extract_value_with_default(dict, "dca_max_safety_orders", 10.0)?,
+        dca_take_profit_pct: extract_value_with_default(dict, "dca_take_profit_pct", 0.015)?,
     })
 }
 
@@ -1566,6 +1576,17 @@ fn extract_value<'a, T: pyo3::FromPyObject<'a>>(dict: &'a PyDict, key: &str) -> 
             ))
         })
         .and_then(pyo3::FromPyObject::extract)
+}
+
+fn extract_value_with_default<'a, T: pyo3::FromPyObject<'a>>(
+    dict: &'a PyDict,
+    key: &str,
+    default: T,
+) -> PyResult<T> {
+    match dict.get_item(key)? {
+        Some(item) => item.extract::<T>(),
+        None => Ok(default),
+    }
 }
 
 fn extract_value_with_fallback<'a, T: pyo3::FromPyObject<'a>>(
@@ -1618,6 +1639,8 @@ pub fn calc_next_entry_long_py(
     ema_bands_lower: f64,
     entry_volatility_logrange_ema_1h: f64,
     order_book_bid: f64,
+    dca_base_price: f64,
+    dca_entry_fills: f64,
 ) -> (f64, f64, String) {
     let exchange_params = ExchangeParams {
         qty_step,
@@ -1675,6 +1698,8 @@ pub fn calc_next_entry_long_py(
         &bot_params,
         &position,
         &trailing_price_bundle,
+        dca_base_price,
+        dca_entry_fills,
     );
 
     (
@@ -1796,6 +1821,8 @@ pub fn calc_next_entry_short_py(
     ema_bands_upper: f64,
     entry_volatility_logrange_ema_1h: f64,
     order_book_ask: f64,
+    dca_base_price: f64,
+    dca_entry_fills: f64,
 ) -> (f64, f64, String) {
     let exchange_params = ExchangeParams {
         qty_step,
@@ -1853,6 +1880,8 @@ pub fn calc_next_entry_short_py(
         &bot_params,
         &position,
         &trailing_price_bundle,
+        dca_base_price,
+        dca_entry_fills,
     );
 
     (
@@ -1974,6 +2003,8 @@ pub fn calc_entries_long_py(
     ema_bands_lower: f64,
     entry_volatility_logrange_ema_1h: f64,
     order_book_bid: f64,
+    dca_base_price: f64,
+    dca_entry_fills: f64,
 ) -> Vec<(f64, f64, u16)> {
     let exchange_params = ExchangeParams {
         qty_step,
@@ -2034,6 +2065,8 @@ pub fn calc_entries_long_py(
         &bot_params,
         &position,
         &trailing_price_bundle,
+        dca_base_price,
+        dca_entry_fills,
     );
 
     // Convert entries to Python-compatible format
@@ -2076,6 +2109,8 @@ pub fn calc_entries_short_py(
     ema_bands_upper: f64,
     entry_volatility_logrange_ema_1h: f64,
     order_book_ask: f64,
+    dca_base_price: f64,
+    dca_entry_fills: f64,
 ) -> Vec<(f64, f64, u16)> {
     let exchange_params = ExchangeParams {
         qty_step,
@@ -2136,6 +2171,8 @@ pub fn calc_entries_short_py(
         &bot_params,
         &position,
         &trailing_price_bundle,
+        dca_base_price,
+        dca_entry_fills,
     );
 
     // Convert entries to Python-compatible format

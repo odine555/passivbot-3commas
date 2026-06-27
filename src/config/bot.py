@@ -388,6 +388,12 @@ def ensure_bot_defaults(
             ("close_trailing_qty_pct", 1.0, "pre-trailing compatibility default"),
             ("close_trailing_retracement_pct", 0.002, "pre-trailing compatibility placeholder"),
             ("close_trailing_threshold_pct", 0.005, "pre-trailing compatibility placeholder"),
+            ("dca_price_deviation_pct", 0.01, "DCA omitted defaults to template value"),
+            ("dca_step_scale", 1.0, "DCA omitted defaults to template value"),
+            ("dca_volume_scale", 1.28, "DCA omitted defaults to template value"),
+            ("dca_so1_ratio", 1.0, "DCA omitted defaults to template value"),
+            ("dca_max_safety_orders", 20, "DCA omitted defaults to template value"),
+            ("dca_take_profit_pct", 0.015, "DCA omitted defaults to template value"),
             (
                 "entry_grid_spacing_volatility_weight",
                 0.0,

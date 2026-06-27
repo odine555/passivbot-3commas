@@ -272,6 +272,23 @@ pub struct TrailingPrices {
     pub short: HashMap<usize, TrailingPriceBundle>,
 }
 
+/// Per (symbol, side) running DCA ladder state derived from fills, fed to the
+/// orchestrator each step (see `01_PROJECT_SPEC.md` §"core problem and the solution").
+/// `base_price` = BO fill price (first entry fill of the current position);
+/// `entry_fills` = count of entry fills in the current position (BO counts as 1).
+/// Absence of a key == flat == 0.0 / 0.0.
+#[derive(Default, Clone, Copy, Debug)]
+pub struct DcaSideState {
+    pub base_price: f64,
+    pub entry_fills: f64,
+}
+
+#[derive(Default, Debug)]
+pub struct DcaTracking {
+    pub long: HashMap<usize, DcaSideState>,
+    pub short: HashMap<usize, DcaSideState>,
+}
+
 pub struct TrailingEnabled {
     long: bool,
     short: bool,
@@ -444,6 +461,7 @@ pub struct Backtest<'a> {
     positions: Positions,
     open_orders: OpenOrders,
     trailing_prices: TrailingPrices,
+    dca_tracking: DcaTracking,
     pnl_cumsum_running: f64,
     pnl_cumsum_max: f64,
     pnl_cumsum_running_net: f64,
@@ -1230,12 +1248,32 @@ impl<'a> Backtest<'a> {
                         position: pos_long,
                         trailing: trailing_long,
                         bot_params: self.bot_params[idx].long.clone(),
+                        dca_base_price: self
+                            .dca_tracking
+                            .long
+                            .get(&idx)
+                            .map_or(0.0, |s| s.base_price),
+                        dca_entry_fills: self
+                            .dca_tracking
+                            .long
+                            .get(&idx)
+                            .map_or(0.0, |s| s.entry_fills),
                     },
                     short: orchestrator::SymbolSideInput {
                         mode: mode_short,
                         position: pos_short,
                         trailing: trailing_short,
                         bot_params: self.bot_params[idx].short.clone(),
+                        dca_base_price: self
+                            .dca_tracking
+                            .short
+                            .get(&idx)
+                            .map_or(0.0, |s| s.base_price),
+                        dca_entry_fills: self
+                            .dca_tracking
+                            .short
+                            .get(&idx)
+                            .map_or(0.0, |s| s.entry_fills),
                     },
                 }
             })
@@ -1374,6 +1412,25 @@ impl<'a> Backtest<'a> {
                 .get(&idx)
                 .cloned()
                 .unwrap_or_default();
+
+            // Feed live DCA ladder state (BO base price + entry-fill count) tracked in
+            // check_for_fills. Flat (no key) -> 0.0 / 0.0 so the entry fn takes the BO branch.
+            let dca_long = self
+                .dca_tracking
+                .long
+                .get(&idx)
+                .copied()
+                .unwrap_or_default();
+            sym.long.dca_base_price = dca_long.base_price;
+            sym.long.dca_entry_fills = dca_long.entry_fills;
+            let dca_short = self
+                .dca_tracking
+                .short
+                .get(&idx)
+                .copied()
+                .unwrap_or_default();
+            sym.short.dca_base_price = dca_short.base_price;
+            sym.short.dca_entry_fills = dca_short.entry_fills;
 
             // Bot params are mostly static, but `wallet_exposure_limit` may be updated per
             // timestep from the active denominator mode (fixed configured n_positions, or
@@ -1756,6 +1813,7 @@ impl<'a> Backtest<'a> {
             current_step: 0,
             open_orders: OpenOrders::default(),
             trailing_prices: TrailingPrices::default(),
+            dca_tracking: DcaTracking::default(),
             pnl_cumsum_running: 0.0,
             pnl_cumsum_max: 0.0,
             pnl_cumsum_running_net: 0.0,
@@ -3237,6 +3295,8 @@ impl<'a> Backtest<'a> {
         let current_pprice = self.positions.long[&idx].price;
         if new_psize == 0.0 {
             self.positions.long.remove(&idx);
+            // Position closed to flat -> reset DCA ladder so the next cycle starts a fresh BO.
+            self.dca_tracking.long.remove(&idx);
         } else {
             self.positions.long.get_mut(&idx).unwrap().size = new_psize;
         }
@@ -3337,6 +3397,8 @@ impl<'a> Backtest<'a> {
         let current_pprice = self.positions.short[&idx].price;
         if new_psize == 0.0 {
             self.positions.short.remove(&idx);
+            // Position closed to flat -> reset DCA ladder so the next cycle starts a fresh BO.
+            self.dca_tracking.short.remove(&idx);
         } else {
             self.positions.short.get_mut(&idx).unwrap().size = new_psize;
         }
@@ -3410,6 +3472,8 @@ impl<'a> Backtest<'a> {
             .long
             .entry(idx)
             .or_insert(Position::default());
+        // Position magnitude immediately before this (magnitude-increasing) entry fill.
+        let was_flat = position_entry.size == 0.0;
         let (new_psize, new_pprice) = calc_new_psize_pprice(
             position_entry.size,
             position_entry.price,
@@ -3419,6 +3483,15 @@ impl<'a> Backtest<'a> {
         );
         self.positions.long.get_mut(&idx).unwrap().size = new_psize;
         self.positions.long.get_mut(&idx).unwrap().price = new_pprice;
+        // DCA ladder tracking: flat->this fill is the BO (base_price = fill price, count = 1);
+        // otherwise it is a safety order (base_price fixed, count += 1).
+        let dca = self.dca_tracking.long.entry(idx).or_default();
+        if was_flat {
+            dca.base_price = exec.price;
+            dca.entry_fills = 1.0;
+        } else {
+            dca.entry_fills += 1.0;
+        }
         let timestamp_ms = self.first_timestamp_ms + (k as u64) * self.interval_ms;
         let wallet_exposure = if new_psize != 0.0 {
             calc_wallet_exposure(
@@ -3488,6 +3561,8 @@ impl<'a> Backtest<'a> {
             .short
             .entry(idx)
             .or_insert(Position::default());
+        // Position magnitude immediately before this (magnitude-increasing) entry fill.
+        let was_flat = position_entry.size == 0.0;
         let (new_psize, new_pprice) = calc_new_psize_pprice(
             position_entry.size,
             position_entry.price,
@@ -3497,6 +3572,15 @@ impl<'a> Backtest<'a> {
         );
         self.positions.short.get_mut(&idx).unwrap().size = new_psize;
         self.positions.short.get_mut(&idx).unwrap().price = new_pprice;
+        // DCA ladder tracking: flat->this fill is the BO (base_price = fill price, count = 1);
+        // otherwise it is a safety order (base_price fixed, count += 1).
+        let dca = self.dca_tracking.short.entry(idx).or_default();
+        if was_flat {
+            dca.base_price = exec.price;
+            dca.entry_fills = 1.0;
+        } else {
+            dca.entry_fills += 1.0;
+        }
         let wallet_exposure = if new_psize != 0.0 {
             calc_wallet_exposure(
                 self.exchange_params_list[idx].c_mult,

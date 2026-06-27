@@ -331,6 +331,30 @@ fn default_hsl_panic_close_order_type() -> String {
     "market".to_string()
 }
 
+fn default_dca_price_deviation_pct() -> f64 {
+    0.005
+}
+
+fn default_dca_step_scale() -> f64 {
+    1.0
+}
+
+fn default_dca_volume_scale() -> f64 {
+    1.0
+}
+
+fn default_dca_so1_ratio() -> f64 {
+    1.0
+}
+
+fn default_dca_max_safety_orders() -> f64 {
+    10.0
+}
+
+fn default_dca_take_profit_pct() -> f64 {
+    0.015
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ForagerScoreWeights {
@@ -437,6 +461,18 @@ pub struct BotParams {
     pub unstuck_ema_dist: f64,
     pub unstuck_loss_allowance_pct: f64,
     pub unstuck_threshold: f64,
+    #[serde(default = "default_dca_price_deviation_pct")]
+    pub dca_price_deviation_pct: f64,
+    #[serde(default = "default_dca_step_scale")]
+    pub dca_step_scale: f64,
+    #[serde(default = "default_dca_volume_scale")]
+    pub dca_volume_scale: f64,
+    #[serde(default = "default_dca_so1_ratio")]
+    pub dca_so1_ratio: f64,
+    #[serde(default = "default_dca_max_safety_orders")]
+    pub dca_max_safety_orders: f64,
+    #[serde(default = "default_dca_take_profit_pct")]
+    pub dca_take_profit_pct: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

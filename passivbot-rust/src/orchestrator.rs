@@ -323,6 +323,12 @@ mod core {
         pub trailing: TrailingPriceBundle,
         /// Per-symbol/per-pside params after applying coin_overrides.
         pub bot_params: BotParams,
+        /// BO fill price for the current position's DCA ladder (0.0 when flat).
+        #[serde(default)]
+        pub dca_base_price: f64,
+        /// Number of entry fills in the current position, BO counts as 1 (0.0 when flat).
+        #[serde(default)]
+        pub dca_entry_fills: f64,
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2229,6 +2235,8 @@ mod core {
                                         &s.long.bot_params,
                                         &s.long.position,
                                         &s.long.trailing,
+                                        s.long.dca_base_price,
+                                        s.long.dca_entry_fills,
                                     ) {
                                         if e.qty != 0.0 {
                                             entries.push(IdealOrder {
@@ -2247,6 +2255,8 @@ mod core {
                                         &s.long.bot_params,
                                         &s.long.position,
                                         &s.long.trailing,
+                                        s.long.dca_base_price,
+                                        s.long.dca_entry_fills,
                                     );
                                     if e.qty != 0.0 {
                                         entries.push(IdealOrder {
@@ -2265,6 +2275,8 @@ mod core {
                                     &s.long.bot_params,
                                     &s.long.position,
                                     &s.long.trailing,
+                                    s.long.dca_base_price,
+                                    s.long.dca_entry_fills,
                                 );
                                 let expand_entries = nc.tradable
                                     && would_fill_next_candle(nc.low, nc.high, e.qty, e.price);
@@ -2275,6 +2287,8 @@ mod core {
                                         &s.long.bot_params,
                                         &s.long.position,
                                         &s.long.trailing,
+                                        s.long.dca_base_price,
+                                        s.long.dca_entry_fills,
                                     ) {
                                         if e.qty != 0.0 {
                                             entries.push(IdealOrder {
@@ -2302,6 +2316,8 @@ mod core {
                                     &s.long.bot_params,
                                     &s.long.position,
                                     &s.long.trailing,
+                                    s.long.dca_base_price,
+                                    s.long.dca_entry_fills,
                                 ) {
                                     if e.qty != 0.0 {
                                         entries.push(IdealOrder {
@@ -2503,6 +2519,8 @@ mod core {
                                         &s.short.bot_params,
                                         &s.short.position,
                                         &s.short.trailing,
+                                        s.short.dca_base_price,
+                                        s.short.dca_entry_fills,
                                     ) {
                                         if e.qty != 0.0 {
                                             entries.push(IdealOrder {
@@ -2521,6 +2539,8 @@ mod core {
                                         &s.short.bot_params,
                                         &s.short.position,
                                         &s.short.trailing,
+                                        s.short.dca_base_price,
+                                        s.short.dca_entry_fills,
                                     );
                                     if e.qty != 0.0 {
                                         entries.push(IdealOrder {
@@ -2539,6 +2559,8 @@ mod core {
                                     &s.short.bot_params,
                                     &s.short.position,
                                     &s.short.trailing,
+                                    s.short.dca_base_price,
+                                    s.short.dca_entry_fills,
                                 );
                                 let expand_entries = nc.tradable
                                     && would_fill_next_candle(nc.low, nc.high, e.qty, e.price);
@@ -2549,6 +2571,8 @@ mod core {
                                         &s.short.bot_params,
                                         &s.short.position,
                                         &s.short.trailing,
+                                        s.short.dca_base_price,
+                                        s.short.dca_entry_fills,
                                     ) {
                                         if e.qty != 0.0 {
                                             entries.push(IdealOrder {
@@ -2576,6 +2600,8 @@ mod core {
                                     &s.short.bot_params,
                                     &s.short.position,
                                     &s.short.trailing,
+                                    s.short.dca_base_price,
+                                    s.short.dca_entry_fills,
                                 ) {
                                     if e.qty != 0.0 {
                                         entries.push(IdealOrder {
@@ -3258,12 +3284,16 @@ mod core {
                     position: Position::default(),
                     trailing: TrailingPriceBundle::default(),
                     bot_params: bp.clone(),
+                    dca_base_price: 0.0,
+                    dca_entry_fills: 0.0,
                 },
                 short: SymbolSideInput {
                     mode: None,
                     position: Position::default(),
                     trailing: TrailingPriceBundle::default(),
                     bot_params: bp,
+                    dca_base_price: 0.0,
+                    dca_entry_fills: 0.0,
                 },
             }
         }
