@@ -1,0 +1,178 @@
+{
+    "backtest": {
+        "base_dir": "backtests",
+        "combine_ohlcvs": true,
+        "compress_cache": true,
+        "end_date": "2026-01-30",
+        "exchanges": [
+            "binance"
+        ],
+        "gap_tolerance_ohlcvs_minutes": 120,
+        "max_warmup_minutes": 0.0,
+        "start_date": "2026-01-01",
+        "starting_balance": 100000,
+        "btc_collateral_cap": 1.0,
+        "btc_collateral_ltv_cap": null,
+        "emit_legacy_metrics": false
+    },
+    "bot": {
+        "long": {
+            "dca_price_deviation_pct": 0.01,
+            "dca_step_scale": 1.0,
+            "dca_volume_scale": 1.28,
+            "dca_so1_ratio": 1.0,
+            "dca_max_safety_orders": 20,
+            "dca_take_profit_pct": 0.015,
+            "ema_span_0": 385,
+            "ema_span_1": 620,
+            "entry_initial_ema_dist": 0.0078,
+            "entry_initial_qty_pct": 0.0122,
+            "forager_score_weights": {
+                "ema_readiness": 0.06,
+                "volatility": 0.71,
+                "volume": 0.23
+            },
+            "forager_volatility_ema_span": 226,
+            "forager_volume_drop_pct": 0.43,
+            "forager_volume_ema_span": 2850,
+            "hsl_cooldown_minutes_after_red": 2101,
+            "hsl_ema_span_minutes": 1511,
+            "hsl_enabled": false,
+            "hsl_no_restart_drawdown_threshold": 1,
+            "hsl_orange_tier_mode": "tp_only_with_active_entry_cancellation",
+            "hsl_panic_close_order_type": "limit",
+            "hsl_red_threshold": 0.058,
+            "hsl_tier_ratios": {
+                "orange": 0.75,
+                "yellow": 0.5
+            },
+            "n_positions": 1,
+            "total_wallet_exposure_limit": 1.0
+        },
+        "short": {
+            "dca_price_deviation_pct": 0.01,
+            "dca_step_scale": 1.0,
+            "dca_volume_scale": 1.28,
+            "dca_so1_ratio": 1.0,
+            "dca_max_safety_orders": 20,
+            "dca_take_profit_pct": 0.015,
+            "ema_span_0": 385,
+            "ema_span_1": 620,
+            "entry_initial_ema_dist": 0.0078,
+            "entry_initial_qty_pct": 0.0122,
+            "forager_score_weights": {
+                "ema_readiness": 0.06,
+                "volatility": 0.71,
+                "volume": 0.23
+            },
+            "forager_volatility_ema_span": 226,
+            "forager_volume_drop_pct": 0.43,
+            "forager_volume_ema_span": 2850,
+            "hsl_cooldown_minutes_after_red": 2101,
+            "hsl_ema_span_minutes": 1511,
+            "hsl_enabled": false,
+            "hsl_no_restart_drawdown_threshold": 1,
+            "hsl_orange_tier_mode": "tp_only_with_active_entry_cancellation",
+            "hsl_panic_close_order_type": "limit",
+            "hsl_red_threshold": 0.058,
+            "hsl_tier_ratios": {
+                "orange": 0.75,
+                "yellow": 0.5
+            },
+            "n_positions": 0,
+            "total_wallet_exposure_limit": 0
+        }
+    },
+    "coin_overrides": {},
+    "live": {
+        "approved_coins": {
+            "long": [
+                "HYPE"
+            ],
+            "short": []
+        },
+        "auto_gs": true,
+        "execution_delay_seconds": 2,
+        "filter_by_min_effective_cost": true,
+        "forced_mode_long": "",
+        "forced_mode_short": "",
+        "ignored_coins": {
+            "long": [],
+            "short": []
+        },
+        "inactive_coin_candle_ttl_minutes": 10.0,
+        "leverage": 10,
+        "market_orders_allowed": false,
+        "max_disk_candles_per_symbol_per_tf": 2000000,
+        "max_memory_candles_per_symbol": 200000,
+        "max_n_cancellations_per_batch": 5,
+        "max_n_creations_per_batch": 3,
+        "max_n_restarts_per_day": 10,
+        "minimum_coin_age_days": 180,
+        "pnls_max_lookback_days": 30,
+        "time_in_force": "good_till_cancelled",
+        "user": "bybit_01",
+        "warmup_ratio": 0.2
+    },
+    "optimize": {
+        "bounds": {
+            "long_dca_price_deviation_pct": [0.002, 0.03, 0.0001],
+            "long_dca_step_scale": [0.8, 1.5, 0.01],
+            "long_dca_volume_scale": [1.0, 2.0, 0.01],
+            "long_dca_so1_ratio": [0.5, 2.0, 0.01],
+            "long_dca_max_safety_orders": [5, 30, 1],
+            "long_dca_take_profit_pct": [0.005, 0.05, 0.0001],
+            "long_ema_span_0": [200, 1440, 5],
+            "long_ema_span_1": [200, 1440, 5],
+            "long_entry_initial_ema_dist": [-0.01, 0.01, 0.0001],
+            "long_entry_initial_qty_pct": [0.01, 0.03, 0.0001],
+            "long_forager_score_weights_ema_readiness": [0, 1, 0.01],
+            "long_forager_score_weights_volatility": [0, 1, 0.01],
+            "long_forager_score_weights_volume": [0, 1, 0.01],
+            "long_forager_volatility_ema_span": [10, 720, 1],
+            "long_forager_volume_drop_pct": [0.4, 1, 0.01],
+            "long_forager_volume_ema_span": [360, 2880, 10],
+            "long_hsl_cooldown_minutes_after_red": [1, 2880, 10],
+            "long_hsl_ema_span_minutes": [1, 2880, 10],
+            "long_hsl_red_threshold": [0.01, 0.12, 0.001],
+            "long_n_positions": [1, 5, 1],
+            "long_total_wallet_exposure_limit": [0.5, 2.0],
+            "short_dca_price_deviation_pct": [0.002, 0.03, 0.0001],
+            "short_dca_step_scale": [0.8, 1.5, 0.01],
+            "short_dca_volume_scale": [1.0, 2.0, 0.01],
+            "short_dca_so1_ratio": [0.5, 2.0, 0.01],
+            "short_dca_max_safety_orders": [5, 30, 1],
+            "short_dca_take_profit_pct": [0.005, 0.05, 0.0001],
+            "short_ema_span_0": [200, 1440, 5],
+            "short_ema_span_1": [200, 1440, 5],
+            "short_entry_initial_ema_dist": [-0.01, 0.01, 0.0001],
+            "short_entry_initial_qty_pct": [0.01, 0.03, 0.0001],
+            "short_forager_score_weights_ema_readiness": [0, 1, 0.01],
+            "short_forager_score_weights_volatility": [0, 1, 0.01],
+            "short_forager_score_weights_volume": [0, 1, 0.01],
+            "short_forager_volatility_ema_span": [10, 720, 1],
+            "short_forager_volume_drop_pct": [0.4, 1, 0.01],
+            "short_forager_volume_ema_span": [360, 2880, 10],
+            "short_hsl_cooldown_minutes_after_red": [1, 2880, 10],
+            "short_hsl_ema_span_minutes": [1, 2880, 10],
+            "short_hsl_red_threshold": [0.01, 0.12, 0.001],
+            "short_n_positions": [0, 0],
+            "short_total_wallet_exposure_limit": [0, 0]
+        },
+        "compress_results_file": true,
+        "crossover_probability": 0.64,
+        "enable_overrides": [],
+        "iters": 500,
+        "limits": {},
+        "mutation_probability": 0.34,
+        "n_cpus": 6,
+        "population_size": 100,
+        "round_to_n_significant_digits": 4,
+        "scoring": [
+            "adg_btc",
+            "mdg_btc",
+            "sharpe_ratio_btc"
+        ],
+        "write_all_results": false
+    }
+}
