@@ -106,6 +106,16 @@ fn calc_effective_min_cost(price: f64, exchange: &ExchangeParams) -> f64 {
     qty_to_cost(calc_min_entry_qty(price, exchange), price, exchange.c_mult)
 }
 
+/// Map a backtest pside int (LONG/SHORT) to the rescue module's side enum.
+#[inline]
+fn rescue_side_for(side: usize) -> crate::rescue::RescueSide {
+    if side == LONG {
+        crate::rescue::RescueSide::Long
+    } else {
+        crate::rescue::RescueSide::Short
+    }
+}
+
 #[derive(Clone, Default, Copy, Debug)]
 pub struct EmaAlphas {
     pub long: Alphas,
@@ -289,6 +299,47 @@ pub struct DcaTracking {
     pub short: HashMap<usize, DcaSideState>,
 }
 
+/// Per (symbol, side-slot) rescue-cycle state, driven from `check_for_fills`
+/// (see `01_RESCUE_SPEC.md` §"Dedicated rescue state"). A slot's entry is present
+/// only while that slot currently holds the rescued position; on a flip the entry
+/// is relocated from the old slot to the opposite slot (the side the new cycle
+/// holds). Mirrors `DcaTracking`'s "absence of key == inactive" convention.
+///
+/// INVARIANT: `debt` and `banked_profit` are accumulated from NET REALIZED FILLS
+/// since arming (flip-close realized losses grow `debt`; recovery/round-trip close
+/// fills grow `banked_profit`) — never from an assumed "N rungs filled" ladder.
+#[derive(Default, Clone, Copy, Debug)]
+pub struct RescueSideState {
+    /// Cumulative realized loss carried by rescue (grows at each flip).
+    pub debt: f64,
+    /// Cumulative net realized profit banked since arming (recovery + grid round
+    /// trips). Recovery deactivates when this reaches `coverage · debt`.
+    pub banked_profit: f64,
+    /// Current cycle's flip/anchor price.
+    pub anchor_price: f64,
+    /// Current cycle's break-even distance `b` (fraction of anchor). Derived from the
+    /// position at arming, scaled by `rescue_grid_step_scale` at each flip.
+    pub b: f64,
+    /// Number of flips performed so far (0 at arming).
+    pub flip_count: i32,
+    /// Cycle starting position (abs coins): the arming position, or the sized flip
+    /// position. Fixes the per-rung grid qty (`base/n_fav`) and lets the grid be keyed
+    /// off inventory depth `(position − base)/rung` rather than the live price.
+    pub base_qty: f64,
+    /// Step `k` at which this slot was (re)created by a flip; guards against a second
+    /// flip/recovery evaluation in the same candle. `usize::MAX` == armed, not flipped.
+    pub last_flip_step: usize,
+    /// A cap was hit and `rescue_on_terminate == "hold"`: stop placing rescue orders
+    /// but keep the position + active flag (spec "Divergence & caps"). Seam for T17.
+    pub terminated_hold: bool,
+}
+
+#[derive(Default, Debug)]
+pub struct RescueTracking {
+    pub long: HashMap<usize, RescueSideState>,
+    pub short: HashMap<usize, RescueSideState>,
+}
+
 pub struct TrailingEnabled {
     long: bool,
     short: bool,
@@ -462,6 +513,7 @@ pub struct Backtest<'a> {
     open_orders: OpenOrders,
     trailing_prices: TrailingPrices,
     dca_tracking: DcaTracking,
+    rescue_tracking: RescueTracking,
     pnl_cumsum_running: f64,
     pnl_cumsum_max: f64,
     pnl_cumsum_running_net: f64,
@@ -1034,6 +1086,43 @@ impl<'a> Backtest<'a> {
                             .long
                             .get(&idx)
                             .map_or(0.0, |s| s.entry_fills),
+                        // Rescue state tracked in check_for_fills (T9). The long slot is
+                        // rescue-active only when it currently holds the rescued position;
+                        // a "hold"-terminated cycle stops placing orders (active=false).
+                        rescue_active: self
+                            .rescue_tracking
+                            .long
+                            .get(&idx)
+                            .map_or(false, |s| !s.terminated_hold),
+                        rescue_side: orchestrator::PositionSide::Long,
+                        rescue_flip_count: self
+                            .rescue_tracking
+                            .long
+                            .get(&idx)
+                            .map_or(0, |s| s.flip_count),
+                        rescue_debt: self
+                            .rescue_tracking
+                            .long
+                            .get(&idx)
+                            .map_or(0.0, |s| s.debt),
+                        rescue_anchor_price: self
+                            .rescue_tracking
+                            .long
+                            .get(&idx)
+                            .map_or(0.0, |s| s.anchor_price),
+                        rescue_b: self.rescue_tracking.long.get(&idx).map_or(0.0, |s| s.b),
+                        rescue_base_qty: self
+                            .rescue_tracking
+                            .long
+                            .get(&idx)
+                            .map_or(0.0, |s| s.base_qty),
+                        // A "hold"-terminated cycle freezes the slot: keep the position,
+                        // emit no orders (rescue overlay AND DCA suppressed downstream).
+                        rescue_frozen: self
+                            .rescue_tracking
+                            .long
+                            .get(&idx)
+                            .map_or(false, |s| s.terminated_hold),
                     },
                     short: orchestrator::SymbolSideInput {
                         mode: mode_short,
@@ -1050,6 +1139,42 @@ impl<'a> Backtest<'a> {
                             .short
                             .get(&idx)
                             .map_or(0.0, |s| s.entry_fills),
+                        // Rescue state tracked in check_for_fills (T9). The short slot is
+                        // rescue-active only when it currently holds the rescued position.
+                        rescue_active: self
+                            .rescue_tracking
+                            .short
+                            .get(&idx)
+                            .map_or(false, |s| !s.terminated_hold),
+                        rescue_side: orchestrator::PositionSide::Short,
+                        rescue_flip_count: self
+                            .rescue_tracking
+                            .short
+                            .get(&idx)
+                            .map_or(0, |s| s.flip_count),
+                        rescue_debt: self
+                            .rescue_tracking
+                            .short
+                            .get(&idx)
+                            .map_or(0.0, |s| s.debt),
+                        rescue_anchor_price: self
+                            .rescue_tracking
+                            .short
+                            .get(&idx)
+                            .map_or(0.0, |s| s.anchor_price),
+                        rescue_b: self.rescue_tracking.short.get(&idx).map_or(0.0, |s| s.b),
+                        rescue_base_qty: self
+                            .rescue_tracking
+                            .short
+                            .get(&idx)
+                            .map_or(0.0, |s| s.base_qty),
+                        // A "hold"-terminated cycle freezes the slot: keep the position,
+                        // emit no orders (rescue overlay AND DCA suppressed downstream).
+                        rescue_frozen: self
+                            .rescue_tracking
+                            .short
+                            .get(&idx)
+                            .map_or(false, |s| s.terminated_hold),
                     },
                 }
             })
@@ -1185,6 +1310,28 @@ impl<'a> Backtest<'a> {
                 .unwrap_or_default();
             sym.short.dca_base_price = dca_short.base_price;
             sym.short.dca_entry_fills = dca_short.entry_fills;
+
+            // Feed live rescue state (T9), tracked in check_for_fills. Each side-slot is
+            // rescue-active only while it currently holds the rescued position; a
+            // "hold"-terminated cycle keeps the position but stops placing rescue orders.
+            let rescue_long = self.rescue_tracking.long.get(&idx).copied();
+            sym.long.rescue_active = rescue_long.map_or(false, |s| !s.terminated_hold);
+            sym.long.rescue_side = orchestrator::PositionSide::Long;
+            sym.long.rescue_flip_count = rescue_long.map_or(0, |s| s.flip_count);
+            sym.long.rescue_debt = rescue_long.map_or(0.0, |s| s.debt);
+            sym.long.rescue_anchor_price = rescue_long.map_or(0.0, |s| s.anchor_price);
+            sym.long.rescue_b = rescue_long.map_or(0.0, |s| s.b);
+            sym.long.rescue_base_qty = rescue_long.map_or(0.0, |s| s.base_qty);
+            sym.long.rescue_frozen = rescue_long.map_or(false, |s| s.terminated_hold);
+            let rescue_short = self.rescue_tracking.short.get(&idx).copied();
+            sym.short.rescue_active = rescue_short.map_or(false, |s| !s.terminated_hold);
+            sym.short.rescue_side = orchestrator::PositionSide::Short;
+            sym.short.rescue_flip_count = rescue_short.map_or(0, |s| s.flip_count);
+            sym.short.rescue_debt = rescue_short.map_or(0.0, |s| s.debt);
+            sym.short.rescue_anchor_price = rescue_short.map_or(0.0, |s| s.anchor_price);
+            sym.short.rescue_b = rescue_short.map_or(0.0, |s| s.b);
+            sym.short.rescue_base_qty = rescue_short.map_or(0.0, |s| s.base_qty);
+            sym.short.rescue_frozen = rescue_short.map_or(false, |s| s.terminated_hold);
 
             // Bot params are mostly static, but `wallet_exposure_limit` may be updated per
             // timestep from the active denominator mode (fixed configured n_positions, or
@@ -1536,6 +1683,7 @@ impl<'a> Backtest<'a> {
             open_orders: OpenOrders::default(),
             trailing_prices: TrailingPrices::default(),
             dca_tracking: DcaTracking::default(),
+            rescue_tracking: RescueTracking::default(),
             pnl_cumsum_running: 0.0,
             pnl_cumsum_max: 0.0,
             pnl_cumsum_running_net: 0.0,
@@ -1700,6 +1848,7 @@ impl<'a> Backtest<'a> {
                 }
             }
             self.check_for_fills(k);
+            self.update_rescue_state(k);
             self.update_emas(k);
             self.update_rounded_balance(k);
             self.update_trailing_prices(k);
@@ -2953,6 +3102,488 @@ impl<'a> Backtest<'a> {
         }
     }
 
+    // =====================================================================
+    // Rescue-grid state machine (T9), driven from `check_for_fills`.
+    //
+    // Spine only: arm on the trigger SO fill under water; accumulate debt/banked
+    // profit from NET REALIZED FILLS (the invariant — never from a rung count);
+    // flip (close-all + realize-into-debt + sized opposite reopen + anchor/b/side/
+    // flip_count update); reset on recovery; terminate-cap hooks. The grid re-fill
+    // *banking* detail (opposing order on each oscillation fill, precise round-trip
+    // debt reduction) is T10 — the seam is `banked_profit`, accumulated on every
+    // recovery/round-trip close in `process_close_fill_{long,short}`.
+    // =====================================================================
+
+    fn update_rescue_state(&mut self, k: usize) {
+        for idx in 0..self.n_coins {
+            self.rescue_step_slot(k, idx, LONG);
+            self.rescue_step_slot(k, idx, SHORT);
+        }
+    }
+
+    #[inline]
+    fn rescue_state_copy(&self, side: usize, idx: usize) -> Option<RescueSideState> {
+        match side {
+            LONG => self.rescue_tracking.long.get(&idx).copied(),
+            _ => self.rescue_tracking.short.get(&idx).copied(),
+        }
+    }
+
+    #[inline]
+    fn rescue_position_copy(&self, side: usize, idx: usize) -> Option<Position> {
+        match side {
+            LONG => self.positions.long.get(&idx).copied(),
+            _ => self.positions.short.get(&idx).copied(),
+        }
+    }
+
+    fn rescue_deactivate(&mut self, side: usize, idx: usize) {
+        match side {
+            LONG => {
+                self.rescue_tracking.long.remove(&idx);
+            }
+            _ => {
+                self.rescue_tracking.short.remove(&idx);
+            }
+        }
+    }
+
+    /// One state-machine step for a single (symbol, side-slot) after this candle's
+    /// fills. Either arms an eligible plain position, or (if active) checks recovery
+    /// then flip.
+    fn rescue_step_slot(&mut self, k: usize, idx: usize, side: usize) {
+        let Some(state) = self.rescue_state_copy(side, idx) else {
+            self.rescue_try_arm(k, idx, side);
+            return;
+        };
+        // A slot just (re)created by a flip this candle, or a "hold"-terminated cycle,
+        // is frozen for this step.
+        if state.last_flip_step == k || state.terminated_hold {
+            return;
+        }
+        if !self.coin_is_tradeable_at(idx, k) {
+            return;
+        }
+        let (n_fav, n_rev) = {
+            let bp = self.bp(idx, side);
+            (bp.n_rescue_fav, bp.n_rescue_rev)
+        };
+        let qty_abs = self
+            .rescue_position_copy(side, idx)
+            .map_or(0.0, |p| p.size.abs());
+        // --- recovery: a rescued position only reaches flat once the recovery grid
+        // has swept the whole position, so the cycle is over. Threshold is the actual
+        // DEBT (the coverage buffer lives in flip sizing as the fee cushion); D == 0
+        // (cycle 0 / cleared) fires on flat alone. Either way deactivate so normal DCA
+        // resumes — a flat slot left active is the degenerate "stuck" state that keeps
+        // DCA suppressed forever.
+        if qty_abs <= 1e-9 {
+            let recovered =
+                crate::rescue::rescue_recovered(0.0, state.banked_profit, state.debt);
+            if std::env::var("RESCUE_DEBUG").is_ok() {
+                let sidestr = if side == LONG { "long" } else { "short" };
+                let tag = if recovered { "recovered" } else { "flat-cleanup" };
+                eprintln!(
+                    "[RESCUE-RECOVER] k={} idx={} side={} {} banked_profit={:.6} debt={:.6} flip_count={} -> DEACTIVATE",
+                    k, idx, sidestr, tag, state.banked_profit, state.debt, state.flip_count
+                );
+            }
+            self.rescue_deactivate(side, idx);
+            return;
+        }
+        // --- flip: price reached the deepest reverse (flip-trigger) level ---
+        let rside = rescue_side_for(side);
+        let trigger = crate::rescue::rescue_flip_trigger_price(
+            rside,
+            state.anchor_price,
+            state.b,
+            n_fav,
+            n_rev,
+        );
+        let triggered = match side {
+            LONG => self.hlcvs_value(k, idx, LOW) <= trigger + 1e-9,
+            _ => self.hlcvs_value(k, idx, HIGH) >= trigger - 1e-9,
+        };
+        if triggered {
+            self.rescue_execute_flip(k, idx, side, state, trigger);
+        }
+    }
+
+    /// Arm rescue when the configured DCA trigger safety order fills while under water.
+    /// `b` at arming = |avg_entry / anchor − 1|, anchor = current price.
+    fn rescue_try_arm(&mut self, k: usize, idx: usize, side: usize) {
+        let (enabled, max_so, trigger_idx) = {
+            let bp = self.bp(idx, side);
+            (
+                bp.rescue_enabled,
+                bp.dca_max_safety_orders,
+                bp.rescue_trigger_so_index,
+            )
+        };
+        if !enabled || !self.coin_is_tradeable_at(idx, k) {
+            return;
+        }
+        let Some(pos) = self.rescue_position_copy(side, idx) else {
+            return;
+        };
+        if pos.size == 0.0 || pos.price <= 0.0 {
+            return;
+        }
+        // Number of safety orders filled so far (entry fills minus the base order).
+        let entry_fills = match side {
+            LONG => self
+                .dca_tracking
+                .long
+                .get(&idx)
+                .map_or(0.0, |s| s.entry_fills),
+            _ => self
+                .dca_tracking
+                .short
+                .get(&idx)
+                .map_or(0.0, |s| s.entry_fills),
+        };
+        let sos_filled = (entry_fills - 1.0).max(0.0);
+        // -1 == last SO == dca_max_safety_orders. NOTE (T11): exact index convention
+        // (0- vs 1-based) to be verified against the DCA grid; here the trigger is the
+        // count of safety orders that must have filled.
+        let target_so = if trigger_idx < 0 {
+            max_so
+        } else {
+            trigger_idx as f64
+        };
+        if sos_filled + 1e-9 < target_so {
+            return;
+        }
+        let price = self.hlcvs_value(k, idx, CLOSE).max(f64::EPSILON);
+        let under_water = match side {
+            LONG => price < pos.price,
+            _ => price > pos.price,
+        };
+        if !under_water {
+            return;
+        }
+        let b = (pos.price / price - 1.0).abs();
+        if b <= 0.0 {
+            return;
+        }
+        let state = RescueSideState {
+            debt: 0.0,
+            banked_profit: 0.0,
+            anchor_price: price,
+            b,
+            base_qty: pos.size.abs(),
+            flip_count: 0,
+            last_flip_step: usize::MAX,
+            terminated_hold: false,
+        };
+        // T11 observability hook (quiet behind RESCUE_DEBUG env var): print arming
+        // state and the spec-geometry grid level prices the orchestrator will place.
+        if std::env::var("RESCUE_DEBUG").is_ok() {
+            let (n_fav, n_rev) = {
+                let bp = self.bp(idx, side);
+                (bp.n_rescue_fav, bp.n_rescue_rev)
+            };
+            let rside = rescue_side_for(side);
+            let sidestr = if side == LONG { "long" } else { "short" };
+            eprintln!(
+                "[RESCUE-ARM] k={} idx={} side={} anchor={:.6} avg_entry={:.6} b={:.6} n_fav={} n_rev={}",
+                k, idx, sidestr, price, pos.price, b, n_fav, n_rev
+            );
+            let rec: Vec<String> = (1..=n_fav)
+                .map(|j| format!("{:.4}", crate::rescue::rescue_level_price(rside, price, b, n_fav, j as i32)))
+                .collect();
+            let rev: Vec<String> = (1..=n_rev)
+                .map(|j| format!("{:.4}", crate::rescue::rescue_level_price(rside, price, b, n_fav, -(j as i32))))
+                .collect();
+            let trig = crate::rescue::rescue_flip_trigger_price(rside, price, b, n_fav, n_rev);
+            eprintln!("[RESCUE-ARM]   recovery: {}", rec.join(", "));
+            eprintln!("[RESCUE-ARM]   reverse:  {}", rev.join(", "));
+            eprintln!("[RESCUE-ARM]   flip_trigger={:.4} spacing={:.6}", trig, crate::rescue::rescue_grid_spacing(b, n_fav));
+        }
+        match side {
+            LONG => {
+                self.rescue_tracking.long.insert(idx, state);
+            }
+            _ => {
+                self.rescue_tracking.short.insert(idx, state);
+            }
+        }
+    }
+
+    /// Close the entire current-side position at `price`, realizing pnl+fee through
+    /// the normal balance/pnl machinery, push the resulting fill, and drop the
+    /// position + its DCA ladder. Returns the realized loss `−(pnl + fee)` to fold
+    /// into rescue debt. Shared by flip and market-close-on-terminate.
+    fn rescue_realize_close_all(
+        &mut self,
+        k: usize,
+        idx: usize,
+        side: usize,
+        price: f64,
+        order_type: OrderType,
+    ) -> f64 {
+        let Some(pos) = self.rescue_position_copy(side, idx) else {
+            return 0.0;
+        };
+        if pos.size == 0.0 {
+            return 0.0;
+        }
+        let cmult = self.exchange_params_list[idx].c_mult;
+        let fee_rate = self.backtest_params.taker_fee;
+        let close_qty = -pos.size; // signed: long close < 0, short close > 0
+        let pnl = match side {
+            LONG => calc_pnl_long(pos.price, price, close_qty, cmult),
+            _ => calc_pnl_short(pos.price, price, close_qty, cmult),
+        };
+        let fee = -qty_to_cost(close_qty, price, cmult) * fee_rate;
+        self.pnl_cumsum_running += pnl;
+        self.pnl_cumsum_max = self.pnl_cumsum_max.max(self.pnl_cumsum_running);
+        self.pnl_cumsum_running_net += pnl + fee;
+        self.pnl_cumsum_max_net = self.pnl_cumsum_max_net.max(self.pnl_cumsum_running_net);
+        self.pnl_cumsum_running_net_pside[side] += pnl + fee;
+        self.record_rolling_pnl(k, pnl + fee);
+        self.update_balance(k, pnl, fee);
+        match side {
+            LONG => {
+                self.positions.long.remove(&idx);
+                self.dca_tracking.long.remove(&idx);
+            }
+            _ => {
+                self.positions.short.remove(&idx);
+                self.dca_tracking.short.remove(&idx);
+            }
+        }
+        self.rescue_push_fill(k, idx, close_qty, price, pnl, fee, 0.0, pos.price, order_type);
+        -(pnl + fee)
+    }
+
+    /// Execute a flip: close-all (loss → debt), scale `b`, size the opposite position
+    /// for recovery, open it at `flip_price` (the new anchor), and relocate rescue
+    /// state to the opposite slot with `flip_count += 1`.
+    fn rescue_execute_flip(
+        &mut self,
+        k: usize,
+        idx: usize,
+        side: usize,
+        state: RescueSideState,
+        flip_price: f64,
+    ) {
+        let close_order_type = match side {
+            LONG => OrderType::CloseGridLong,
+            _ => OrderType::CloseGridShort,
+        };
+        let realized_loss = self.rescue_realize_close_all(k, idx, side, flip_price, close_order_type);
+        let new_debt = state.debt + realized_loss;
+
+        let (n_fav, coverage, step_scale) = {
+            let bp = self.bp(idx, side);
+            (
+                bp.n_rescue_fav,
+                bp.rescue_recovery_coverage,
+                bp.rescue_grid_step_scale,
+            )
+        };
+        let b_new = crate::rescue::rescue_scaled_b(state.b, step_scale);
+        let new_side = if side == LONG { SHORT } else { LONG };
+
+        let cmult = self.exchange_params_list[idx].c_mult;
+        let qty_step = self.exchange_params_list[idx].qty_step;
+        let fee_rate = self.backtest_params.taker_fee;
+        let qty_new_abs = round_(
+            crate::rescue::rescue_flip_qty(new_debt, b_new, n_fav, coverage, flip_price),
+            qty_step,
+        );
+        // T16 observability hook (quiet behind RESCUE_DEBUG): print flip event so the
+        // verify worker can extract flip price, realized loss, debt, scaled b and the
+        // sized opposite-side notional and cross-check against the 03 formulas.
+        if std::env::var("RESCUE_DEBUG").is_ok() {
+            let from = if side == LONG { "long" } else { "short" };
+            let to = if new_side == LONG { "long" } else { "short" };
+            let notional = qty_new_abs * flip_price;
+            eprintln!(
+                "[RESCUE-FLIP] k={} idx={} {}->{} flip_count={} flip_price={:.6} realized_loss={:.6} debt={:.6} b_old={:.6} b_new={:.6} qty_new={:.6} notional_new={:.6}",
+                k, idx, from, to, state.flip_count + 1, flip_price, realized_loss, new_debt, state.b, b_new, qty_new_abs, notional
+            );
+        }
+        if qty_new_abs > 0.0 && flip_price > 0.0 {
+            let open_qty = if new_side == LONG {
+                qty_new_abs
+            } else {
+                -qty_new_abs
+            };
+            let fee_open = -qty_to_cost(open_qty, flip_price, cmult) * fee_rate;
+            self.pnl_cumsum_running_net += fee_open;
+            self.pnl_cumsum_max_net = self.pnl_cumsum_max_net.max(self.pnl_cumsum_running_net);
+            self.pnl_cumsum_running_net_pside[new_side] += fee_open;
+            self.record_rolling_pnl(k, fee_open);
+            self.update_balance(k, 0.0, fee_open);
+            let new_pos = Position {
+                size: open_qty,
+                price: flip_price,
+            };
+            let dca = DcaSideState {
+                base_price: flip_price,
+                entry_fills: 1.0,
+            };
+            match new_side {
+                LONG => {
+                    self.positions.long.insert(idx, new_pos);
+                    self.dca_tracking.long.insert(idx, dca);
+                }
+                _ => {
+                    self.positions.short.insert(idx, new_pos);
+                    self.dca_tracking.short.insert(idx, dca);
+                }
+            }
+            let open_order_type = match new_side {
+                LONG => OrderType::EntryGridNormalLong,
+                _ => OrderType::EntryGridNormalShort,
+            };
+            self.rescue_push_fill(
+                k,
+                idx,
+                open_qty,
+                flip_price,
+                0.0,
+                fee_open,
+                open_qty,
+                flip_price,
+                open_order_type,
+            );
+        }
+
+        // Relocate rescue state to whichever slot now holds the position.
+        self.rescue_deactivate(side, idx);
+        let new_state = RescueSideState {
+            debt: new_debt,
+            banked_profit: state.banked_profit,
+            anchor_price: flip_price,
+            b: b_new,
+            base_qty: qty_new_abs,
+            flip_count: state.flip_count + 1,
+            last_flip_step: k,
+            terminated_hold: false,
+        };
+        match new_side {
+            LONG => {
+                self.rescue_tracking.long.insert(idx, new_state);
+            }
+            _ => {
+                self.rescue_tracking.short.insert(idx, new_state);
+            }
+        }
+        // Cap / terminate hooks (T17 finalizes the exact edges).
+        self.rescue_check_terminate(k, idx, new_side);
+    }
+
+    /// Terminate-cap hooks: `rescue_max_flips` or `rescue_wallet_exposure_limit`.
+    /// `hold` freezes the cycle (keep position, stop placing orders); `market_close`
+    /// closes at the current price, realizes the loss, and deactivates. Full edge
+    /// verification is T17.
+    fn rescue_check_terminate(&mut self, k: usize, idx: usize, side: usize) {
+        let Some(state) = self.rescue_state_copy(side, idx) else {
+            return;
+        };
+        let (max_flips, rescue_wel, on_terminate) = {
+            let bp = self.bp(idx, side);
+            (
+                bp.rescue_max_flips,
+                bp.rescue_wallet_exposure_limit,
+                bp.rescue_on_terminate.clone(),
+            )
+        };
+        let cmult = self.exchange_params_list[idx].c_mult;
+        let we = self.rescue_position_copy(side, idx).map_or(0.0, |p| {
+            calc_wallet_exposure(cmult, self.balance.usd_total_balance, p.size.abs(), p.price)
+        });
+        let flip_cap = (state.flip_count.max(0) as usize) >= max_flips;
+        let we_cap = rescue_wel > 0.0 && we >= rescue_wel;
+        if !flip_cap && !we_cap {
+            return;
+        }
+        if std::env::var("RESCUE_DEBUG").is_ok() {
+            let sidestr = if side == LONG { "long" } else { "short" };
+            let cause = if flip_cap { "max_flips" } else { "wallet_exposure" };
+            eprintln!(
+                "[RESCUE-TERMINATE] k={} idx={} side={} cause={} mode={} flip_count={} max_flips={} we={:.6} rescue_wel={:.6} debt={:.6} banked={:.6}",
+                k, idx, sidestr, cause, on_terminate, state.flip_count, max_flips, we, rescue_wel, state.debt, state.banked_profit
+            );
+        }
+        if on_terminate == "market_close" {
+            let order_type = match side {
+                LONG => OrderType::CloseGridLong,
+                _ => OrderType::CloseGridShort,
+            };
+            let price = self.hlcvs_value(k, idx, CLOSE).max(f64::EPSILON);
+            self.rescue_realize_close_all(k, idx, side, price, order_type);
+            self.rescue_deactivate(side, idx);
+        } else {
+            // "hold": keep position + record, but stop placing rescue orders.
+            match side {
+                LONG => {
+                    if let Some(s) = self.rescue_tracking.long.get_mut(&idx) {
+                        s.terminated_hold = true;
+                    }
+                }
+                _ => {
+                    if let Some(s) = self.rescue_tracking.short.get_mut(&idx) {
+                        s.terminated_hold = true;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Record a synthetic rescue fill (flip close / flip open / terminate close)
+    /// into `self.fills`, mirroring the bookkeeping of `process_*_fill_*`.
+    #[allow(clippy::too_many_arguments)]
+    fn rescue_push_fill(
+        &mut self,
+        k: usize,
+        idx: usize,
+        fill_qty: f64,
+        fill_price: f64,
+        pnl: f64,
+        fee_paid: f64,
+        post_size: f64,
+        post_price: f64,
+        order_type: OrderType,
+    ) {
+        let timestamp_ms = self.first_timestamp_ms + (k as u64) * self.interval_ms;
+        let wallet_exposure = if post_size != 0.0 {
+            calc_wallet_exposure(
+                self.exchange_params_list[idx].c_mult,
+                self.balance.usd_total_balance,
+                post_size.abs(),
+                post_price,
+            ) * post_size.signum()
+        } else {
+            0.0
+        };
+        let (twe_long, twe_short, twe_net) = self.compute_twe_components();
+        self.fills.push(Fill {
+            index: k,
+            timestamp_ms,
+            coin: self.backtest_params.coins[idx].clone(),
+            pnl,
+            fee_paid,
+            usd_total_balance: self.balance.usd_total_balance,
+            btc_cash_wallet: self.balance.btc_cash_wallet,
+            usd_cash_wallet: self.balance.usd_cash_wallet,
+            btc_price: self.btc_usd_prices[k],
+            fill_qty,
+            fill_price,
+            position_size: post_size,
+            position_price: post_price,
+            order_type,
+            liquidity: "taker".to_string(),
+            wallet_exposure,
+            twe_long,
+            twe_short,
+            twe_net,
+        });
+    }
+
     fn process_close_fill_long(
         &mut self,
         k: usize,
@@ -2990,6 +3621,11 @@ impl<'a> Backtest<'a> {
         self.pnl_cumsum_running_net += pnl + fee_paid;
         self.pnl_cumsum_max_net = self.pnl_cumsum_max_net.max(self.pnl_cumsum_running_net);
         self.pnl_cumsum_running_net_pside[LONG] += pnl + fee_paid;
+        // Rescue (T9): a recovery / grid round-trip close while active banks net realized
+        // profit toward recovery coverage. Debt accounting stays anchored to net fills.
+        if let Some(state) = self.rescue_tracking.long.get_mut(&idx) {
+            state.banked_profit += pnl + fee_paid;
+        }
         self.record_rolling_pnl(k, pnl + fee_paid);
         let balance_before = self.snapshot_balance();
         self.update_balance(k, pnl, fee_paid);
@@ -3092,6 +3728,10 @@ impl<'a> Backtest<'a> {
         self.pnl_cumsum_running_net += pnl + fee_paid;
         self.pnl_cumsum_max_net = self.pnl_cumsum_max_net.max(self.pnl_cumsum_running_net);
         self.pnl_cumsum_running_net_pside[SHORT] += pnl + fee_paid;
+        // Rescue (T9): bank net realized profit from recovery / grid round-trip closes.
+        if let Some(state) = self.rescue_tracking.short.get_mut(&idx) {
+            state.banked_profit += pnl + fee_paid;
+        }
         self.record_rolling_pnl(k, pnl + fee_paid);
         let balance_before = self.snapshot_balance();
         self.update_balance(k, pnl, fee_paid);

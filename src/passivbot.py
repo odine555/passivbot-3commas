@@ -537,6 +537,248 @@ def compute_live_warmup_windows(
     return per_symbol_win, per_symbol_h1_hours, per_symbol_skip_historical
 
 
+# ---------------------------------------------------------------------------
+# Rescue-grid live state reconstruction (T14).
+#
+# The Rust orchestrator is stateless: each cycle it is handed the rescue STATE
+# (active / side / flip_count / debt / anchor / b / base_qty / frozen) on the
+# per-(symbol,side) input and emits the grid for THAT cycle. In the backtest the
+# state is driven candle-by-candle by `backtest.rs::RescueTracking`. In LIVE we
+# must reconstruct the very same fields from the realized fill history.
+#
+# INVARIANT (spec): `rescue_debt` and the live position are ALWAYS recomputed from
+# net realized fills since arming — never from an assumed ladder. This mirrors
+# backtest.rs:
+#   * ARM when the configured trigger safety order fills while under water; the
+#     break-even distance `b0 = |avg_entry / price − 1|`, anchor = the trigger
+#     fill price, debt = 0.
+#   * Within a cycle, recovery / round-trip closes BANK their realized (pnl+fee).
+#   * A FLIP is the close-all of the whole position (its realized loss folds into
+#     `debt`) followed by the opposite-side sized reopen; `b` scales by
+#     `rescue_grid_step_scale`, `anchor` = the flip/reopen price, `base_qty` = the
+#     reopened size, `flip_count += 1`. The flip-close realized loss goes to DEBT,
+#     NOT to banked (disjoint, exactly as backtest.rs splits the synthetic flip
+#     close from `process_close_fill_*`).
+#   * RECOVERY: the position reaches flat and (debt <= 0 OR banked >= debt) — the
+#     cycle deactivates and normal DCA resumes.
+#   * A flip-count / wallet-exposure cap with `rescue_on_terminate == "hold"`
+#     FREEZES the slot (keep the position, feed `rescue_frozen=True`,
+#     `rescue_active=False`).
+# ---------------------------------------------------------------------------
+
+RESCUE_INACTIVE_STATE = {
+    "rescue_active": False,
+    "rescue_side": "long",
+    "rescue_flip_count": 0,
+    "rescue_debt": 0.0,
+    "rescue_anchor_price": 0.0,
+    "rescue_b": 0.0,
+    "rescue_base_qty": 0.0,
+    "rescue_frozen": False,
+}
+
+
+def _rescue_fill_get(ev, key, default=0.0):
+    """Read a field from a FillEvent dataclass OR a plain dict, coercing None."""
+    if isinstance(ev, dict):
+        v = ev.get(key, default)
+    else:
+        v = getattr(ev, key, default)
+    return default if v is None else v
+
+
+def reconstruct_rescue_states(events, params, balance=0.0, c_mult=1.0):
+    """Reconstruct rescue state per side for ONE symbol from its realized fills.
+
+    Mirrors ``backtest.rs::RescueTracking`` but is driven by realized fills rather
+    than candle highs/lows (the live analogue of "price reached the trigger" is
+    "the reverse-grid add / flip-close fills landed").
+
+    Parameters
+    ----------
+    events:
+        Iterable of fills for a single symbol (both position sides). Each fill
+        exposes ``timestamp``, ``side`` ('buy'/'sell'), ``qty``, ``price``,
+        ``pnl``, ``fee_paid``, ``position_side`` ('long'/'short') and ``psize``
+        (absolute position size AFTER the fill). Accepts FillEvent objects or
+        dicts.
+    params:
+        ``{"long": {...}, "short": {...}}`` per-side bot params, each with the
+        keys read below (``rescue_enabled``, ``rescue_trigger_so_index``,
+        ``dca_max_safety_orders``, ``rescue_grid_step_scale``,
+        ``rescue_max_flips``, ``rescue_wallet_exposure_limit``,
+        ``rescue_on_terminate``).
+    balance, c_mult:
+        Used only for the wallet-exposure terminate cap; when ``balance <= 0`` the
+        WE cap is skipped (flip-count cap still applies).
+
+    Returns
+    -------
+    ``{"long": <8-field state dict>, "short": <8-field state dict>}``. The active
+    cycle populates whichever side currently holds the rescued position; the other
+    side stays at inactive defaults. With rescue disabled or never armed, both
+    sides are byte-for-byte the inactive defaults.
+    """
+    out = {
+        "long": dict(RESCUE_INACTIVE_STATE),
+        "short": dict(RESCUE_INACTIVE_STATE),
+    }
+    out["long"]["rescue_side"] = "long"
+    out["short"]["rescue_side"] = "short"
+
+    evs = sorted(events, key=lambda e: int(_rescue_fill_get(e, "timestamp", 0) or 0))
+    if not evs:
+        return out
+
+    eps = 1e-9
+    # Per-side DCA entry-fill counters (reset to 0 whenever that side goes flat),
+    # used only to detect the arming trigger — identical bookkeeping to
+    # `_dca_state_for_position`.
+    dca_fills = {"long": 0, "short": 0}
+
+    active = False
+    cur_side = None
+    anchor = 0.0
+    b = 0.0
+    debt = 0.0
+    banked = 0.0
+    base_qty = 0.0
+    flip_count = 0
+    frozen = False
+    flat_pending = False
+    pending_close_pnl_fee = 0.0
+
+    def _apply_caps():
+        nonlocal frozen
+        p = params.get(cur_side, {})
+        max_flips = int(p.get("rescue_max_flips", 0) or 0)
+        rescue_wel = float(p.get("rescue_wallet_exposure_limit", 0.0) or 0.0)
+        on_term = str(p.get("rescue_on_terminate", "hold") or "hold")
+        flip_cap = max_flips > 0 and flip_count >= max_flips
+        we_cap = False
+        if rescue_wel > 0.0 and balance > 0.0:
+            we = base_qty * anchor * float(c_mult or 1.0) / balance
+            we_cap = we >= rescue_wel
+        if (flip_cap or we_cap) and on_term != "market_close":
+            # "hold": keep the position, stop placing orders.
+            frozen = True
+        # "market_close" termination relies on an orchestrator-emitted close-all
+        # (not yet wired live); the eventual close fill flattens the slot and the
+        # recovery branch deactivates it. Left active here intentionally.
+
+    for ev in evs:
+        direction = str(_rescue_fill_get(ev, "side", "")).lower()
+        pside = str(_rescue_fill_get(ev, "position_side", "")).lower()
+        if pside not in ("long", "short"):
+            continue
+        price = float(_rescue_fill_get(ev, "price", 0.0) or 0.0)
+        pnl = float(_rescue_fill_get(ev, "pnl", 0.0) or 0.0)
+        fee = float(_rescue_fill_get(ev, "fee_paid", 0.0) or 0.0)
+        pprice = float(_rescue_fill_get(ev, "pprice", 0.0) or 0.0)
+        psize_after = abs(float(_rescue_fill_get(ev, "psize", 0.0) or 0.0))
+        is_entry = (pside == "long" and direction == "buy") or (
+            pside == "short" and direction == "sell"
+        )
+        if is_entry:
+            dca_fills[pside] += 1
+
+        handled_as_flip = False
+        # --- resolve a pending flat (close-all): flip vs recovery -------------
+        if active and flat_pending:
+            is_opp_open = is_entry and pside != cur_side and psize_after > eps
+            if is_opp_open:
+                # FLIP: fold the close-all loss into debt, open opposite side.
+                prev_step_scale = float(
+                    params.get(cur_side, {}).get("rescue_grid_step_scale", 1.0) or 1.0
+                )
+                debt += -pending_close_pnl_fee
+                flip_count += 1
+                cur_side = pside
+                anchor = price
+                base_qty = psize_after
+                b = b * prev_step_scale
+                flat_pending = False
+                pending_close_pnl_fee = 0.0
+                handled_as_flip = True
+                _apply_caps()
+            else:
+                # RECOVERY: the flattening close banks; deactivate the cycle.
+                banked += pending_close_pnl_fee
+                active = False
+                cur_side = None
+                flat_pending = False
+                pending_close_pnl_fee = 0.0
+                frozen = False
+
+        # --- ongoing cycle bookkeeping ---------------------------------------
+        if active and not handled_as_flip and pside == cur_side:
+            if not is_entry:
+                # close on the rescued side.
+                if psize_after <= eps:
+                    # close-all -> defer (flip folds to debt, recovery banks).
+                    flat_pending = True
+                    pending_close_pnl_fee = pnl + fee
+                else:
+                    # partial / round-trip close banks immediately.
+                    banked += pnl + fee
+            # entry on the rescued side = reverse-grid add (grows the position);
+            # base_qty / b are fixed within the cycle, nothing to update.
+
+        # --- arming ----------------------------------------------------------
+        if not active:
+            p = params.get(pside, {})
+            if (
+                is_entry
+                and bool(p.get("rescue_enabled", False))
+                and price > 0.0
+                and pprice > 0.0
+            ):
+                trigger_idx = int(p.get("rescue_trigger_so_index", -1) or -1)
+                max_so = float(p.get("dca_max_safety_orders", 0) or 0)
+                target_so = max_so if trigger_idx < 0 else float(trigger_idx)
+                sos_filled = max(dca_fills[pside] - 1, 0)
+                under_water = (pside == "long" and price < pprice) or (
+                    pside == "short" and price > pprice
+                )
+                bb = abs(pprice / price - 1.0)
+                if sos_filled + eps >= target_so and under_water and bb > 0.0:
+                    active = True
+                    cur_side = pside
+                    anchor = price
+                    b = bb
+                    debt = 0.0
+                    banked = 0.0
+                    base_qty = psize_after if psize_after > eps else abs(
+                        float(_rescue_fill_get(ev, "qty", 0.0) or 0.0)
+                    )
+                    flip_count = 0
+                    frozen = False
+                    flat_pending = False
+                    pending_close_pnl_fee = 0.0
+
+        # reset DCA counter when a side goes flat (fresh DCA cycle next time).
+        if psize_after <= eps:
+            dca_fills[pside] = 0
+
+    # End of stream: a still-pending flat with no reopen is a recovery.
+    if active and flat_pending:
+        active = False
+        cur_side = None
+
+    if active and cur_side in ("long", "short"):
+        out[cur_side] = {
+            "rescue_active": not frozen,
+            "rescue_side": cur_side,
+            "rescue_flip_count": int(flip_count),
+            "rescue_debt": float(debt),
+            "rescue_anchor_price": float(anchor),
+            "rescue_b": float(b),
+            "rescue_base_qty": float(base_qty),
+            "rescue_frozen": bool(frozen),
+        }
+    return out
+
+
 class Passivbot:
     @staticmethod
     def _log_symbol(symbol: Any) -> str:
@@ -10002,6 +10244,33 @@ class Passivbot:
                 "hsl_panic_close_order_type": str(
                     self.bot_value(pside, "hsl_panic_close_order_type")
                 ),
+                # Rescue params: keep exact types serde/pyo3 expects on the Rust
+                # BotParams (bool / int / float / str), mirroring the hsl_ block.
+                "rescue_enabled": bool(self.bot_value(pside, "rescue_enabled")),
+                "rescue_trigger_so_index": int(
+                    round(float(self.bot_value(pside, "rescue_trigger_so_index") or 0.0))
+                ),
+                "n_rescue_fav": int(
+                    round(float(self.bot_value(pside, "n_rescue_fav") or 0.0))
+                ),
+                "n_rescue_rev": int(
+                    round(float(self.bot_value(pside, "n_rescue_rev") or 0.0))
+                ),
+                "rescue_grid_step_scale": float(
+                    self.bot_value(pside, "rescue_grid_step_scale") or 0.0
+                ),
+                "rescue_recovery_coverage": float(
+                    self.bot_value(pside, "rescue_recovery_coverage") or 0.0
+                ),
+                "rescue_wallet_exposure_limit": float(
+                    self.bot_value(pside, "rescue_wallet_exposure_limit") or 0.0
+                ),
+                "rescue_max_flips": int(
+                    round(float(self.bot_value(pside, "rescue_max_flips") or 0.0))
+                ),
+                "rescue_on_terminate": str(
+                    self.bot_value(pside, "rescue_on_terminate")
+                ),
             }
         )
         return out
@@ -10281,6 +10550,86 @@ class Passivbot:
             "dca_entry_fills": 1.0,
         }
 
+    def _rescue_params_for_side(self, pside: str) -> dict:
+        """Pull the handful of rescue/DCA params the reconstruction needs."""
+        def _f(key, default=0.0):
+            try:
+                return float(self.bot_value(pside, key) or default)
+            except Exception:
+                return float(default)
+
+        return {
+            "rescue_enabled": bool(self.bot_value(pside, "rescue_enabled")),
+            "rescue_trigger_so_index": int(round(_f("rescue_trigger_so_index", -1.0))),
+            "dca_max_safety_orders": int(round(_f("dca_max_safety_orders", 0.0))),
+            "rescue_grid_step_scale": _f("rescue_grid_step_scale", 1.0),
+            "rescue_max_flips": int(round(_f("rescue_max_flips", 0.0))),
+            "rescue_wallet_exposure_limit": _f("rescue_wallet_exposure_limit", 0.0),
+            "rescue_on_terminate": str(self.bot_value(pside, "rescue_on_terminate")),
+        }
+
+    def _rescue_state_for_position(
+        self, symbol: str, pside: str, pos: dict
+    ) -> dict:
+        """Reconstruct the 8 rescue STATE fields for one (symbol, side) slot.
+
+        Returns a dict with the Rust ``SymbolSideInput`` serde names
+        (``rescue_active`` / ``rescue_side`` / ``rescue_flip_count`` /
+        ``rescue_debt`` / ``rescue_anchor_price`` / ``rescue_b`` /
+        ``rescue_base_qty`` / ``rescue_frozen``). Inactive defaults when rescue is
+        disabled, never armed, or the active cycle currently sits on the other
+        side — those defaults equal the Rust serde defaults, so normal (non-rescue)
+        behaviour is unchanged. See ``reconstruct_rescue_states`` for the mirror of
+        the backtest state machine.
+        """
+        default = dict(RESCUE_INACTIVE_STATE)
+        default["rescue_side"] = pside
+        try:
+            enabled_long = bool(self.bot_value("long", "rescue_enabled"))
+            enabled_short = bool(self.bot_value("short", "rescue_enabled"))
+        except Exception:
+            return default
+        if not (enabled_long or enabled_short):
+            return default
+
+        manager = getattr(self, "_pnls_manager", None)
+        if manager is None:
+            return default
+        try:
+            events = manager.get_events(symbol=symbol)
+        except Exception:
+            return default
+        if not events:
+            return default
+
+        try:
+            params = {
+                "long": self._rescue_params_for_side("long"),
+                "short": self._rescue_params_for_side("short"),
+            }
+            balance = float(self.get_raw_balance() or 0.0)
+            c_mult = float(getattr(self, "c_mults", {}).get(symbol, 1.0) or 1.0)
+            states = reconstruct_rescue_states(
+                events, params, balance=balance, c_mult=c_mult
+            )
+        except Exception:
+            logging.exception(
+                "[rescue] state reconstruction failed for %s %s", symbol, pside
+            )
+            return default
+        state = states.get(pside, default)
+        # Safety: only report active/frozen for a side that actually holds a
+        # position (an empty/partial fill cache must not fabricate a rescue).
+        try:
+            psize_now = abs(float(pos.get("size", 0.0) or 0.0))
+        except Exception:
+            psize_now = 0.0
+        if psize_now <= 0.0 and (
+            state.get("rescue_active") or state.get("rescue_frozen")
+        ):
+            return default
+        return state
+
     async def calc_ideal_orders_orchestrator_from_snapshot(
         self, snapshot: dict, *, return_snapshot: bool
     ):
@@ -10397,6 +10746,7 @@ class Passivbot:
                     },
                     "bot_params": self._bot_params_to_rust_dict(pside, symbol),
                     **self._dca_state_for_position(symbol, pside, pos),
+                    **self._rescue_state_for_position(symbol, pside, pos),
                 }
 
             m1_close_pairs = [
@@ -11378,6 +11728,7 @@ class Passivbot:
                     },
                     "bot_params": self._bot_params_to_rust_dict(pside, symbol),
                     **self._dca_state_for_position(symbol, pside, pos),
+                    **self._rescue_state_for_position(symbol, pside, pos),
                 }
 
             # Build EMA bundle for this symbol.

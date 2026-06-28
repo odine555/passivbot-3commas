@@ -25,6 +25,34 @@ CLIFF_EDGE_THRESHOLD_KEYS = ()
 CLIFF_EDGE_DUST_EPS = 1e-9
 CLIFF_EDGE_WARNING_THRESHOLD = 0.1
 
+# Rescue grid parameters reach the Rust `BotParams` payload verbatim (no float
+# numerify), so they MUST carry the exact Python types serde/pyo3 expects:
+# rescue_enabled -> bool (PyBool), the count/index params -> int (usize/i32),
+# the scale/coverage/exposure params -> float (f64), rescue_on_terminate -> str.
+RESCUE_PARAM_DEFAULTS = (
+    ("rescue_enabled", False, "rescue omitted defaults to disabled"),
+    ("rescue_trigger_so_index", -1, "rescue omitted defaults to template value"),
+    ("n_rescue_fav", 10, "rescue omitted defaults to template value"),
+    ("n_rescue_rev", 5, "rescue omitted defaults to template value"),
+    ("rescue_grid_step_scale", 1.1, "rescue omitted defaults to template value"),
+    ("rescue_recovery_coverage", 1.05, "rescue omitted defaults to template value"),
+    ("rescue_wallet_exposure_limit", 10.0, "rescue omitted defaults to template value"),
+    ("rescue_max_flips", 5, "rescue omitted defaults to template value"),
+    ("rescue_on_terminate", "hold", "rescue omitted defaults to template value"),
+)
+RESCUE_INT_PARAM_KEYS = (
+    "rescue_trigger_so_index",
+    "n_rescue_fav",
+    "n_rescue_rev",
+    "rescue_max_flips",
+)
+RESCUE_FLOAT_PARAM_KEYS = (
+    "rescue_grid_step_scale",
+    "rescue_recovery_coverage",
+    "rescue_wallet_exposure_limit",
+)
+RESCUE_ON_TERMINATE_VALUES = ("hold", "market_close")
+
 FORAGER_CANONICAL_TO_INTERNAL_BOT_KEYS = {
     "forager_volatility_ema_span": "filter_volatility_ema_span",
     "forager_volume_ema_span": "filter_volume_ema_span",
@@ -352,6 +380,7 @@ def ensure_bot_defaults(
             ),
             ("hsl_panic_close_order_type", "market", "disabled HSL compatibility default"),
             ("hsl_red_threshold", 0.25, "disabled HSL compatibility default"),
+            *RESCUE_PARAM_DEFAULTS,
         ]:
             if key not in bot_cfg:
                 _set_hydrated_bot_value(
@@ -725,6 +754,78 @@ def validate_forager_config(
                 )
 
 
+def _coerce_rescue_bool(value, *, path: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        return str2bool(value)
+    raise TypeError(f"{path} must be a boolean, got {type(value).__name__}")
+
+
+def _coerce_rescue_int(value, *, path: str) -> int:
+    if isinstance(value, bool):
+        raise TypeError(f"{path} must be an integer, got bool")
+    try:
+        return int(round(float(value)))
+    except (TypeError, ValueError) as exc:
+        raise TypeError(f"{path} must be numeric") from exc
+
+
+def _coerce_rescue_float(value, *, path: str) -> float:
+    if isinstance(value, bool):
+        raise TypeError(f"{path} must be numeric, got bool")
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError) as exc:
+        raise TypeError(f"{path} must be numeric") from exc
+    if not math.isfinite(numeric):
+        raise ValueError(f"{path} must be finite")
+    return numeric
+
+
+def normalize_rescue_params(
+    result: dict, *, tracker: Optional[object] = None
+) -> None:
+    """Coerce rescue_* params to the exact Python types the Rust BotParams payload
+    needs (bool / int / float / str). The rescue keys reach Rust verbatim (no float
+    numerify), so a config that supplies ``rescue_enabled: 1`` or
+    ``rescue_wallet_exposure_limit: 10`` would otherwise fail pyo3 extraction."""
+    for pside in BOT_POSITION_SIDES:
+        bot_cfg = result["bot"][pside]
+        for key in (
+            "rescue_enabled",
+            "rescue_trigger_so_index",
+            "n_rescue_fav",
+            "n_rescue_rev",
+            "rescue_grid_step_scale",
+            "rescue_recovery_coverage",
+            "rescue_wallet_exposure_limit",
+            "rescue_max_flips",
+            "rescue_on_terminate",
+        ):
+            if key not in bot_cfg:
+                continue
+            raw = bot_cfg[key]
+            path = _bot_path(pside, key)
+            if key == "rescue_enabled":
+                coerced = _coerce_rescue_bool(raw, path=path)
+            elif key in RESCUE_INT_PARAM_KEYS:
+                coerced = _coerce_rescue_int(raw, path=path)
+            elif key in RESCUE_FLOAT_PARAM_KEYS:
+                coerced = _coerce_rescue_float(raw, path=path)
+            else:  # rescue_on_terminate
+                coerced = str(raw)
+                if coerced not in RESCUE_ON_TERMINATE_VALUES:
+                    allowed = ", ".join(RESCUE_ON_TERMINATE_VALUES)
+                    raise ValueError(f"{path} must be one of {{{allowed}}}, got {raw!r}")
+            if type(coerced) is not type(raw) or coerced != raw:
+                if tracker is not None and raw != coerced:
+                    tracker.update(["bot", pside, key], raw, coerced)
+                bot_cfg[key] = coerced
+
+
 def format_bot_config(
     bot_cfg: dict,
     *,
@@ -755,6 +856,7 @@ def format_bot_config(
     normalize_cliff_edge_thresholds(result, verbose=verbose, tracker=tracker)
     normalize_bot_forager_config(result, verbose=verbose, tracker=tracker)
     normalize_position_counts(result, tracker=tracker)
+    normalize_rescue_params(result, tracker=tracker)
     strip_deprecated_entry_grid_inflation_flags(result, verbose=verbose, tracker=tracker)
     return sort_dict_keys(result["bot"])
 

@@ -326,6 +326,44 @@ mod core {
         /// Number of entry fills in the current position, BO counts as 1 (0.0 when flat).
         #[serde(default)]
         pub dca_entry_fills: f64,
+        /// True while a rescue cycle is overlaying grids on this (symbol, side).
+        #[serde(default)]
+        pub rescue_active: bool,
+        /// Side the current rescue cycle holds (flips between Long/Short across cycles).
+        #[serde(default = "default_rescue_side")]
+        pub rescue_side: PositionSide,
+        /// Number of flips performed in the active rescue cycle (0 at arming).
+        #[serde(default)]
+        pub rescue_flip_count: i32,
+        /// Cumulative realized loss carried by rescue, net of banked grid profit.
+        #[serde(default)]
+        pub rescue_debt: f64,
+        /// Current rescue cycle's flip/anchor price (0.0 when inactive).
+        #[serde(default)]
+        pub rescue_anchor_price: f64,
+        /// Current rescue cycle's break-even distance `b` (fraction of anchor).
+        /// Maintained as state by the backtest/live state machine: derived from the
+        /// position at arming (cycle 0), then scaled by `rescue_grid_step_scale` at
+        /// each flip. 0.0 means "derive from position" (the cycle-0 fallback).
+        #[serde(default)]
+        pub rescue_b: f64,
+        /// Cycle starting position (abs coins): the arming position, or the sized
+        /// flip position. Fixes the per-rung grid qty (`base/n_fav`) and lets the grid
+        /// be keyed off inventory depth `(position − base)/rung` rather than the
+        /// instantaneous price. 0.0 means "use the current position" (cycle-0 fallback).
+        #[serde(default)]
+        pub rescue_base_qty: f64,
+        /// True when a rescue cycle hit a cap with `rescue_on_terminate == "hold"`: the
+        /// slot is FROZEN. The orchestrator emits NO orders for it (neither rescue grid
+        /// NOR normal DCA), keeping the position untouched. Distinct from `rescue_active`
+        /// (which is false while frozen): a frozen slot has stopped its state machine but
+        /// must not hand the held position back to DCA. Panic still overrides a freeze.
+        #[serde(default)]
+        pub rescue_frozen: bool,
+    }
+
+    fn default_rescue_side() -> PositionSide {
+        PositionSide::Long
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1473,6 +1511,298 @@ mod core {
         }
     }
 
+    // ---------------------------------------------------------------------------
+    // Rescue-grid routing (T5). The rescue state machine (arm/debt/flip) lives in
+    // backtest.rs (T9); here we only ROUTE: given an active rescue cycle's state
+    // (anchor + derived `b` + params) we emit the recovery + reverse grids instead
+    // of the normal DCA entries and the single TP close.
+    // ---------------------------------------------------------------------------
+
+    /// Convert orchestrator `PositionSide` to the rescue module's `RescueSide`.
+    #[inline]
+    fn pside_to_rescue_side(p: PositionSide) -> crate::rescue::RescueSide {
+        match p {
+            PositionSide::Long => crate::rescue::RescueSide::Long,
+            PositionSide::Short => crate::rescue::RescueSide::Short,
+        }
+    }
+
+    /// Convert the rescue module's `RescueSide` back to `PositionSide`.
+    #[inline]
+    #[allow(dead_code)]
+    fn rescue_side_to_pside(r: crate::rescue::RescueSide) -> PositionSide {
+        match r {
+            crate::rescue::RescueSide::Long => PositionSide::Long,
+            crate::rescue::RescueSide::Short => PositionSide::Short,
+        }
+    }
+
+    /// Break-even distance `b` for an active rescue cycle, derived from the
+    /// position's average entry vs the cycle anchor: `b = |avg_entry / anchor − 1|`
+    /// (spec: "b ... derived from the position, not a parameter"). This is exact at
+    /// arming (cycle 0). Post-flip cycles scale `b` by `rescue_grid_step_scale`;
+    /// reconstructing that scaled value from fills is a T9/backtest concern (see
+    /// follow-up note in PROGRESS).
+    fn rescue_break_even_distance(pos: &Position, anchor: f64) -> f64 {
+        if anchor > 0.0 && pos.price.is_finite() && pos.price > 0.0 {
+            (pos.price / anchor - 1.0).abs()
+        } else {
+            0.0
+        }
+    }
+
+    /// Emit the rescue-grid orders for an active (symbol, side) cycle: the recovery
+    /// grid becomes close orders, the reverse grid becomes entry orders. Geometry is
+    /// driven by the slot's own `pside` (guaranteeing the close/add sign convention
+    /// matches the live position); the per-side `rescue_side` field is expected to
+    /// equal the slot side, since the state machine relocates rescue state to
+    /// whichever slot currently holds the position across flips.
+    fn append_rescue_orders(
+        symbol_idx: usize,
+        pside: PositionSide,
+        side: &SymbolSideInput,
+        entries: &mut Vec<IdealOrder>,
+        closes: &mut Vec<IdealOrder>,
+    ) {
+        let pos_qty_abs = side.position.size.abs();
+        let anchor = side.rescue_anchor_price;
+        if anchor <= 0.0 || pos_qty_abs <= 0.0 {
+            return;
+        }
+        let bot = &side.bot_params;
+        // Post-flip cycles cannot derive `b` from the position (the flipped position
+        // is opened AT the anchor, so avg_entry == anchor → derived b would be 0).
+        // The state machine therefore feeds the maintained `rescue_b`; fall back to the
+        // position-derived value at arming (cycle 0) when it is unset.
+        let b = if side.rescue_b > 0.0 {
+            side.rescue_b
+        } else {
+            rescue_break_even_distance(&side.position, anchor)
+        };
+        // Cycle base position (fixes the per-rung qty and the inventory-depth keying).
+        // Falls back to the current position at cycle 0 if the state machine has not
+        // fed it yet (yields the cycle-start grid: closes +1..+n_fav, adds -1..-n_rev).
+        let base_qty = if side.rescue_base_qty > 0.0 {
+            side.rescue_base_qty
+        } else {
+            pos_qty_abs
+        };
+        let rside = pside_to_rescue_side(pside);
+        // Traditional grid keyed off INVENTORY DEPTH: a close rests one level toward
+        // the anchor from the bottom of held inventory, an add one level adverse of it.
+        // As price oscillates the opposing order is always one spacing away, so each
+        // round trip banks spacing*rung and a sub-level wiggle never sells unpaired
+        // inventory. Levels and per-rung size are fixed within the cycle.
+        let (grid_closes, grid_adds) = crate::rescue::calc_rescue_grid_orders(
+            rside,
+            base_qty,
+            pos_qty_abs,
+            anchor,
+            b,
+            bot.n_rescue_fav,
+            bot.n_rescue_rev,
+        );
+        for o in grid_closes {
+            if o.qty != 0.0 {
+                closes.push(IdealOrder {
+                    symbol_idx,
+                    pside,
+                    qty: o.qty,
+                    price: o.price,
+                    order_type: o.order_type,
+                });
+            }
+        }
+        for o in grid_adds {
+            if o.qty != 0.0 {
+                entries.push(IdealOrder {
+                    symbol_idx,
+                    pside,
+                    qty: o.qty,
+                    price: o.price,
+                    order_type: o.order_type,
+                });
+            }
+        }
+    }
+
+    /// LIVE flip / terminate emission — mirrors `backtest.rs::rescue_execute_flip`
+    /// + `rescue_check_terminate`, but as EMITTED ideal orders rather than direct
+    /// state mutation. Returns:
+    ///   * `None` — price has NOT reached the cycle's deepest reverse (flip-trigger)
+    ///     level: the caller emits the normal two-sided rescue grid unchanged.
+    ///   * `Some(orders)` — the flip-trigger level is reached, so the grid is
+    ///     suppressed this tick and these flip/terminate orders are emitted instead
+    ///     (`orders` is empty for a `hold` terminate — emit nothing).
+    ///
+    /// No state is mutated (live is stateless per tick). The resulting fills are
+    /// caught up by reconstruction (T14) next cycle, which relocates `rescue_active`
+    /// /anchor to the opposite slot — so the flip won't re-fire once it fills. These
+    /// orders are routed OUTSIDE the per-side trim/loss/TWEL gates (a deliberate,
+    /// pre-sized action), mirroring the backtest that flips without gating.
+    fn try_rescue_flip(
+        symbol_idx: usize,
+        pside: PositionSide,
+        side: &SymbolSideInput,
+        order_book: &OrderBook,
+        exchange: &ExchangeParams,
+        balance: f64,
+    ) -> Option<Vec<IdealOrder>> {
+        let pos_qty_abs = side.position.size.abs();
+        let anchor = side.rescue_anchor_price;
+        if anchor <= 0.0 || pos_qty_abs <= 0.0 {
+            return None;
+        }
+        // Idempotency: only flip while the slot side still matches the rescue cycle
+        // side. Once a flip fills, reconstruction relocates the rescued position (and
+        // `rescue_active`) to the opposite slot, so this slot stops re-firing.
+        if side.rescue_side != pside {
+            return None;
+        }
+        let bot = &side.bot_params;
+        let n_fav = bot.n_rescue_fav;
+        let n_rev = bot.n_rescue_rev;
+        // Post-flip cycles feed the maintained `rescue_b`; cycle 0 derives it.
+        let b = if side.rescue_b > 0.0 {
+            side.rescue_b
+        } else {
+            rescue_break_even_distance(&side.position, anchor)
+        };
+        if b <= 0.0 {
+            return None;
+        }
+        let rside = pside_to_rescue_side(pside);
+        let trigger =
+            crate::rescue::rescue_flip_trigger_price(rside, anchor, b, n_fav, n_rev);
+        let price = current_market_price(order_book);
+        if !(price.is_finite() && price > 0.0) {
+            return None;
+        }
+        if !crate::rescue::rescue_flip_triggered(rside, price, trigger) {
+            // Not at the flip level -> caller emits the normal grid.
+            return None;
+        }
+
+        // --- Flip triggered. Close-all of the current position at the flip price
+        // (long close qty < 0, short close qty > 0), mirroring rescue_realize_close_all.
+        let close_qty = match pside {
+            PositionSide::Long => -pos_qty_abs,
+            PositionSide::Short => pos_qty_abs,
+        };
+        let close_order = IdealOrder {
+            symbol_idx,
+            pside,
+            qty: close_qty,
+            price: trigger,
+            order_type: match pside {
+                PositionSide::Long => OrderType::CloseGridLong,
+                PositionSide::Short => OrderType::CloseGridShort,
+            },
+        };
+
+        // --- Fold the realized close loss into debt, scale b, size the opposite side
+        // for recovery (mirrors rescue_execute_flip). `new_debt` = carried rescue_debt
+        // + the loss of closing the current position at the flip price (incl. taker fee).
+        let cmult = exchange.c_mult;
+        let pnl = match pside {
+            PositionSide::Long => {
+                calc_pnl_long(side.position.price, trigger, close_qty, cmult)
+            }
+            PositionSide::Short => {
+                calc_pnl_short(side.position.price, trigger, close_qty, cmult)
+            }
+        };
+        let fee = -qty_to_cost(close_qty, trigger, cmult) * exchange.taker_fee;
+        let realized_loss = -(pnl + fee);
+        let new_debt = side.rescue_debt + realized_loss;
+        let b_new = crate::rescue::rescue_scaled_b(b, bot.rescue_grid_step_scale);
+        let qty_new_abs = round_(
+            crate::rescue::rescue_flip_qty(
+                new_debt,
+                b_new,
+                n_fav,
+                bot.rescue_recovery_coverage,
+                trigger,
+            ),
+            exchange.qty_step,
+        );
+
+        // --- Cap evaluation (mirrors rescue_check_terminate, applied PREDICTIVELY:
+        // decide before emitting). The flip about to be emitted is flip number
+        // `flip_count + 1`; if that exceeds `rescue_max_flips`, or the would-be flipped
+        // position's wallet exposure reaches `rescue_wallet_exposure_limit`, apply
+        // `rescue_on_terminate`. The strict `>` matches the backtest's
+        // execute-then-check `>=` (which lets exactly `max_flips` flips occur).
+        let fc_after = (side.rescue_flip_count.max(0) as usize) + 1;
+        let we_new = if qty_new_abs > 0.0 {
+            calc_wallet_exposure(cmult, balance, qty_new_abs, trigger)
+        } else {
+            0.0
+        };
+        let flip_cap = fc_after > bot.rescue_max_flips;
+        let we_cap = bot.rescue_wallet_exposure_limit > 0.0
+            && we_new >= bot.rescue_wallet_exposure_limit;
+        if flip_cap || we_cap {
+            if bot.rescue_on_terminate == "market_close" {
+                // Close the whole current position at the flip price; NO reopen.
+                return Some(vec![close_order]);
+            }
+            // "hold": emit NOTHING this tick. Permanent freezing is owned by the
+            // `rescue_frozen` path (set by reconstruction when it detects the cap
+            // from fills); until then, suppressing all orders here keeps the held
+            // position untouched, consistent with that freeze.
+            return Some(Vec::new());
+        }
+
+        // --- Normal flip: close-all + sized opposite-side reopen at the flip price
+        // (the new cycle's anchor). Opposite open qty: long-open > 0, short-open < 0.
+        let mut out = vec![close_order];
+        if qty_new_abs > 0.0 && trigger > 0.0 {
+            let new_pside = match pside {
+                PositionSide::Long => PositionSide::Short,
+                PositionSide::Short => PositionSide::Long,
+            };
+            let (open_qty, open_order_type) = match new_pside {
+                PositionSide::Long => (qty_new_abs, OrderType::EntryGridNormalLong),
+                PositionSide::Short => (-qty_new_abs, OrderType::EntryGridNormalShort),
+            };
+            out.push(IdealOrder {
+                symbol_idx,
+                pside: new_pside,
+                qty: open_qty,
+                price: trigger,
+                order_type: open_order_type,
+            });
+        }
+        Some(out)
+    }
+
+    /// Effective portfolio wallet-exposure ceiling for `pside`'s entry crop. While a
+    /// rescue cycle is active on any symbol of this side, the normal
+    /// `total_wallet_exposure_limit` crop is BYPASSED in favour of the dedicated,
+    /// higher `rescue_wallet_exposure_limit` ceiling (spec "Divergence & caps"). When
+    /// no rescue is active the normal TWEL is returned unchanged.
+    fn effective_twel_for_pside(input: &OrchestratorInput, pside: PositionSide) -> f64 {
+        let normal = match pside {
+            PositionSide::Long => {
+                input.global.global_bot_params.long.total_wallet_exposure_limit
+            }
+            PositionSide::Short => {
+                input.global.global_bot_params.short.total_wallet_exposure_limit
+            }
+        }
+        .max(0.0);
+        let mut rescue_ceiling: Option<f64> = None;
+        for s in input.symbols.iter() {
+            let side = symbol_side_input(s, pside);
+            if side.rescue_active {
+                let c = side.bot_params.rescue_wallet_exposure_limit.max(0.0);
+                rescue_ceiling = Some(rescue_ceiling.map_or(c, |m: f64| m.max(c)));
+            }
+        }
+        rescue_ceiling.unwrap_or(normal)
+    }
+
     #[derive(Clone)]
     struct PerSymbolOrders {
         symbol_idx: usize,
@@ -2137,6 +2467,13 @@ mod core {
         let per_long = &mut workspace.per_long;
         let per_short = &mut workspace.per_short;
 
+        // Rescue flip / market-close-on-terminate orders. These are deliberate,
+        // pre-sized actions that must bypass the per-side trim/loss/TWEL gates
+        // (mirroring the backtest, which flips without gating) — and the opposite-side
+        // reopen would otherwise be mis-gated by the current slot's side. They are
+        // appended to the final order set after all gating.
+        let mut flip_orders: Vec<IdealOrder> = Vec::new();
+
         for s in &input.symbols {
             // LONG
             {
@@ -2186,6 +2523,32 @@ mod core {
                         &s.exchange,
                     ) {
                         closes.push(p);
+                    }
+                } else if s.long.rescue_frozen {
+                    // Terminated-hold freeze: keep the position, emit NO orders for this
+                    // slot (suppress both the rescue overlay AND normal DCA). Panic above
+                    // still wins. `entries`/`closes` stay empty.
+                } else if s.long.rescue_active {
+                    // Rescue overlay replaces normal DCA entries and the single TP close.
+                    // At the flip-trigger level emit the flip / market-close instead of
+                    // the grid (routed via flip_orders, outside the per-side gates).
+                    if let Some(mut fo) = try_rescue_flip(
+                        s.symbol_idx,
+                        PositionSide::Long,
+                        &s.long,
+                        &s.order_book,
+                        &s.exchange,
+                        input.balance,
+                    ) {
+                        flip_orders.append(&mut fo);
+                    } else {
+                        append_rescue_orders(
+                            s.symbol_idx,
+                            PositionSide::Long,
+                            &s.long,
+                            &mut entries,
+                            &mut closes,
+                        );
                     }
                 } else {
                     let wants_entries = should_generate_entries(mode, has_pos, allow_initial);
@@ -2469,6 +2832,32 @@ mod core {
                         &s.exchange,
                     ) {
                         closes.push(p);
+                    }
+                } else if s.short.rescue_frozen {
+                    // Terminated-hold freeze: keep the position, emit NO orders for this
+                    // slot (suppress both the rescue overlay AND normal DCA). Panic above
+                    // still wins. `entries`/`closes` stay empty.
+                } else if s.short.rescue_active {
+                    // Rescue overlay replaces normal DCA entries and the single TP close.
+                    // At the flip-trigger level emit the flip / market-close instead of
+                    // the grid (routed via flip_orders, outside the per-side gates).
+                    if let Some(mut fo) = try_rescue_flip(
+                        s.symbol_idx,
+                        PositionSide::Short,
+                        &s.short,
+                        &s.order_book,
+                        &s.exchange,
+                        input.balance,
+                    ) {
+                        flip_orders.append(&mut fo);
+                    } else {
+                        append_rescue_orders(
+                            s.symbol_idx,
+                            PositionSide::Short,
+                            &s.short,
+                            &mut entries,
+                            &mut closes,
+                        );
                     }
                 } else {
                     let wants_entries = should_generate_entries(mode, has_pos, allow_initial);
@@ -2764,12 +3153,7 @@ mod core {
             gate_entries_by_twel_deterministic(
                 PositionSide::Long,
                 input.balance,
-                input
-                    .global
-                    .global_bot_params
-                    .long
-                    .total_wallet_exposure_limit
-                    .max(0.0),
+                effective_twel_for_pside(input, PositionSide::Long),
                 &workspace.gate_positions_long,
                 &mut workspace.all_entries,
                 &input.symbols,
@@ -2798,12 +3182,7 @@ mod core {
             gate_entries_by_twel_deterministic(
                 PositionSide::Short,
                 input.balance,
-                input
-                    .global
-                    .global_bot_params
-                    .short
-                    .total_wallet_exposure_limit
-                    .max(0.0),
+                effective_twel_for_pside(input, PositionSide::Short),
                 &workspace.gate_positions_short,
                 &mut workspace.all_entries,
                 &input.symbols,
@@ -2888,6 +3267,9 @@ mod core {
             orders.append(&mut s.closes);
             orders.append(&mut s.entries);
         }
+        // Rescue flip / terminate orders bypass all per-side gating (deliberate,
+        // pre-sized actions); append them so they still participate in global sort.
+        orders.append(&mut flip_orders);
 
         if input.global.sort_global {
             orders.sort_by(|a, b| {
@@ -3055,6 +3437,14 @@ mod core {
                     bot_params: bp.clone(),
                     dca_base_price: 0.0,
                     dca_entry_fills: 0.0,
+                    rescue_active: false,
+                    rescue_side: PositionSide::Long,
+                    rescue_flip_count: 0,
+                    rescue_debt: 0.0,
+                    rescue_anchor_price: 0.0,
+                    rescue_b: 0.0,
+                    rescue_base_qty: 0.0,
+                    rescue_frozen: false,
                 },
                 short: SymbolSideInput {
                     mode: None,
@@ -3063,6 +3453,14 @@ mod core {
                     bot_params: bp,
                     dca_base_price: 0.0,
                     dca_entry_fills: 0.0,
+                    rescue_active: false,
+                    rescue_side: PositionSide::Short,
+                    rescue_flip_count: 0,
+                    rescue_debt: 0.0,
+                    rescue_anchor_price: 0.0,
+                    rescue_b: 0.0,
+                    rescue_base_qty: 0.0,
+                    rescue_frozen: false,
                 },
             }
         }

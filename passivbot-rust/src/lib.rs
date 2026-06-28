@@ -7,6 +7,7 @@ mod entries;
 mod equity_hard_stop_loss;
 mod orchestrator;
 mod python;
+pub mod rescue;
 mod risk;
 mod trailing;
 mod types;

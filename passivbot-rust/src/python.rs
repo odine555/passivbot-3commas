@@ -1353,6 +1353,36 @@ fn bot_params_from_dict(dict: &PyDict) -> PyResult<BotParams> {
         dca_so1_ratio: extract_value_with_default(dict, "dca_so1_ratio", 1.0)?,
         dca_max_safety_orders: extract_value_with_default(dict, "dca_max_safety_orders", 10.0)?,
         dca_take_profit_pct: extract_value_with_default(dict, "dca_take_profit_pct", 0.015)?,
+        // Rescue-grid params (T3 added them to BotParams; defaults mirror types.rs).
+        rescue_enabled: extract_value_with_default(dict, "rescue_enabled", false)?,
+        rescue_trigger_so_index: extract_value_with_default(
+            dict,
+            "rescue_trigger_so_index",
+            -1i32,
+        )?,
+        n_rescue_fav: extract_value_with_default(dict, "n_rescue_fav", 10usize)?,
+        n_rescue_rev: extract_value_with_default(dict, "n_rescue_rev", 5usize)?,
+        rescue_grid_step_scale: extract_value_with_default(
+            dict,
+            "rescue_grid_step_scale",
+            1.1,
+        )?,
+        rescue_recovery_coverage: extract_value_with_default(
+            dict,
+            "rescue_recovery_coverage",
+            1.05,
+        )?,
+        rescue_wallet_exposure_limit: extract_value_with_default(
+            dict,
+            "rescue_wallet_exposure_limit",
+            10.0,
+        )?,
+        rescue_max_flips: extract_value_with_default(dict, "rescue_max_flips", 5usize)?,
+        rescue_on_terminate: extract_value_with_default(
+            dict,
+            "rescue_on_terminate",
+            "hold".to_string(),
+        )?,
     })
 }
 

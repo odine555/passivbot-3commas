@@ -355,6 +355,42 @@ fn default_dca_take_profit_pct() -> f64 {
     0.015
 }
 
+fn default_rescue_enabled() -> bool {
+    false
+}
+
+fn default_rescue_trigger_so_index() -> i32 {
+    -1
+}
+
+fn default_n_rescue_fav() -> usize {
+    10
+}
+
+fn default_n_rescue_rev() -> usize {
+    5
+}
+
+fn default_rescue_grid_step_scale() -> f64 {
+    1.1
+}
+
+fn default_rescue_recovery_coverage() -> f64 {
+    1.05
+}
+
+fn default_rescue_wallet_exposure_limit() -> f64 {
+    10.0
+}
+
+fn default_rescue_max_flips() -> usize {
+    5
+}
+
+fn default_rescue_on_terminate() -> String {
+    "hold".to_string()
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ForagerScoreWeights {
@@ -446,6 +482,24 @@ pub struct BotParams {
     pub dca_max_safety_orders: f64,
     #[serde(default = "default_dca_take_profit_pct")]
     pub dca_take_profit_pct: f64,
+    #[serde(default = "default_rescue_enabled")]
+    pub rescue_enabled: bool,
+    #[serde(default = "default_rescue_trigger_so_index")]
+    pub rescue_trigger_so_index: i32,
+    #[serde(default = "default_n_rescue_fav")]
+    pub n_rescue_fav: usize,
+    #[serde(default = "default_n_rescue_rev")]
+    pub n_rescue_rev: usize,
+    #[serde(default = "default_rescue_grid_step_scale")]
+    pub rescue_grid_step_scale: f64,
+    #[serde(default = "default_rescue_recovery_coverage")]
+    pub rescue_recovery_coverage: f64,
+    #[serde(default = "default_rescue_wallet_exposure_limit")]
+    pub rescue_wallet_exposure_limit: f64,
+    #[serde(default = "default_rescue_max_flips")]
+    pub rescue_max_flips: usize,
+    #[serde(default = "default_rescue_on_terminate")]
+    pub rescue_on_terminate: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
