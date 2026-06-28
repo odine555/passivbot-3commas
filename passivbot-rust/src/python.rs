@@ -1355,13 +1355,16 @@ fn bot_params_from_dict(dict: &PyDict) -> PyResult<BotParams> {
         dca_take_profit_pct: extract_value_with_default(dict, "dca_take_profit_pct", 0.015)?,
         // Rescue-grid params (T3 added them to BotParams; defaults mirror types.rs).
         rescue_enabled: extract_value_with_default(dict, "rescue_enabled", false)?,
+        // Extract integer-like params as f64 then round, so optimizer-supplied
+        // floats (e.g. 10.0) are accepted just like dca_max_safety_orders.
         rescue_trigger_so_index: extract_value_with_default(
             dict,
             "rescue_trigger_so_index",
-            -1i32,
-        )?,
-        n_rescue_fav: extract_value_with_default(dict, "n_rescue_fav", 10usize)?,
-        n_rescue_rev: extract_value_with_default(dict, "n_rescue_rev", 5usize)?,
+            -1.0_f64,
+        )?
+        .round() as i32,
+        n_rescue_fav: extract_value_with_default(dict, "n_rescue_fav", 10.0_f64)?.round() as usize,
+        n_rescue_rev: extract_value_with_default(dict, "n_rescue_rev", 5.0_f64)?.round() as usize,
         rescue_grid_step_scale: extract_value_with_default(
             dict,
             "rescue_grid_step_scale",
@@ -1377,7 +1380,8 @@ fn bot_params_from_dict(dict: &PyDict) -> PyResult<BotParams> {
             "rescue_wallet_exposure_limit",
             10.0,
         )?,
-        rescue_max_flips: extract_value_with_default(dict, "rescue_max_flips", 5usize)?,
+        rescue_max_flips: extract_value_with_default(dict, "rescue_max_flips", 5.0_f64)?.round()
+            as usize,
         rescue_on_terminate: extract_value_with_default(
             dict,
             "rescue_on_terminate",
