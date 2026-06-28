@@ -205,6 +205,67 @@ emitted. Set `risk_twel_enforcer_threshold = 1.0`, disable TWEL auto-reduce, or
 use a manual/`tp_only` intervention if this trim/refill interaction is
 undesirable for a v7 live bot.
 
+## Rescue Grid (Recovery Mode)
+
+Rescue Grid is an optional, **experimental** recovery overlay that activates after a DCA
+position has exhausted its safety orders and is still under water. While
+`rescue_active`, the normal DCA reentries and the single take-profit close are suppressed
+for that `(symbol, side)` and replaced by a two-sided rescue grid; the per-side
+`rescue_wallet_exposure_limit` replaces the normal exposure cap for that slot. See
+[Rescue Grid](rescue_grid.md) for the full lifecycle, geometry, and worked example.
+
+The parameters live under `bot.long.*` and `bot.short.*` like the other side-specific
+settings.
+
+### Configured parameters
+
+| Parameter | Type | Default | Optimizable | Meaning |
+| --- | --- | --- | --- | --- |
+| `rescue_enabled` | bool | `false` | no | Master switch for rescue on that side. |
+| `rescue_trigger_so_index` | int | `-1` | no | Which filled DCA safety order arms rescue. `-1` = the last safety order. |
+| `n_rescue_fav` | int | `10` | **yes** `[4, 20]` | Number of rungs in the recovery (favorable-direction) grid. |
+| `n_rescue_rev` | int | `5` | **yes** `[2, 10]` | Number of rungs in the reverse (adverse-direction) grid; the deepest rung is the flip trigger. |
+| `rescue_grid_step_scale` | float | `1.1` | **yes** `[1.0, 1.5]` | Multiplier applied to the break-even distance `b` at each flip. |
+| `rescue_recovery_coverage` | float | `1.05` | no | Size the flipped position so a full recovery sweep nets `coverage x debt` (the `> 1.0` buffer covers fees/funding). |
+| `rescue_wallet_exposure_limit` | float | `10.0` | no | Dedicated wallet-exposure ceiling used **instead of** the normal limit while rescue is active. |
+| `rescue_max_flips` | int | `5` | no | Hard cap on the number of flips before terminating. |
+| `rescue_on_terminate` | str | `"hold"` | no | Action when a cap binds: `hold` (keep position, place no further orders) or `market_close` (close at market and end rescue). |
+
+### Derived quantities (never configured)
+
+The following are computed from the live position and the parameters above; there is no
+config key for them:
+
+- the break-even distance `b` at arming (`|avg_entry / price - 1|`) and its post-flip scaled value,
+- the flip-position notional and quantity,
+- every grid order size and the grid spacings,
+- the carried `debt`, the current `side`, the `anchor` price, and the `flip_count`.
+
+### Geometry
+
+```text
+b                = |avg_entry / price - 1|        # at arming, from the position
+recovery span    = 2 * b                          # from the anchor
+spacing          = 2 * b / n_rescue_fav           # uniform within a cycle
+reverse span     = n_rescue_rev * spacing         # deepest reverse rung = flip trigger
+                 = 2 * b * (n_rescue_rev / n_rescue_fav)
+```
+
+With the default `n_rescue_rev = n_rescue_fav / 2` (5/10) the reverse span equals `b`, so
+the flip lands exactly the break-even distance from the anchor. Each recovery rung and each
+reverse-add rung carries the same per-rung quantity (`position_qty / n_rescue_fav`).
+
+Flip sizing (post-scale `b`):
+
+```text
+V_new = rescue_recovery_coverage * debt / ( b * (n_rescue_fav + 1) / n_rescue_fav )
+```
+
+> **Risk.** Notional grows roughly 1.9x per adverse flip and the favorable move needed to
+> clear the debt widens each flip, so consecutive adverse flips diverge. `rescue_max_flips`
+> and `rescue_wallet_exposure_limit` exist to bound this; one of them typically binds around
+> flip 3-4. Treat rescue as a high-risk, experimental mode.
+
 ## Parameter Interactions at a Glance
 
 | Parameter                                      | Primary effect                                             | Key equations |
@@ -217,6 +278,7 @@ undesirable for a v7 live bot.
 | `unstuck_*`                                    | Loss realization rules                                    | `unstuck_allowed`, `close_price` |
 | `risk_wel_enforcer_threshold`, `risk_we_excess_allowance_pct` | Per-symbol exposure cap                                 | `target_i`, `qty` |
 | `risk_twel_enforcer_threshold`, `risk_we_excess_allowance_pct` | Portfolio-wide exposure cap                              | `max_reducible_i`, `qty` |
+| `rescue_*` (recovery mode)                     | Two-sided recovery grid + flips after DCA exhausts        | `spacing`, `V_new` (see [Rescue Grid](rescue_grid.md)) |
 
 For worked examples on a per-parameter basis, see the comments sprinkled in
 `passivbot-rust/src/entries.rs` and the optimiser notebooks under `notebooks/`.

@@ -119,3 +119,34 @@ If the proxy rejects the request (e.g., missing credentials) ccxt will report a
 > directly to the exchange websocket hosts. When websockets are disabled the bot
 > still refreshes orders and positions on its normal schedule via REST polling,
 > so trading continues—only the `watch_orders` push updates are suppressed.
+
+## Rescue Grid (recovery mode) live behaviour
+
+Rescue Grid is an optional, **experimental** recovery mode (see
+[Rescue Grid](rescue_grid.md)). When `bot.{long,short}.rescue_enabled = true`, the live bot
+runs rescue per `(symbol, side)` as follows:
+
+- **State is reconstructed from fills each cycle.** The live bot does not persist a separate
+  rescue ledger. Instead, every cycle it rebuilds the rescue state — active flag, current side,
+  flip count, carried debt, anchor price, break-even distance, and base quantity — from the
+  realized fill history provided by the `FillEventsManager`. Arming, debt accounting, flips, and
+  recovery are all derived from actual fills, mirroring the backtest path. If rescue is disabled
+  the state is the inactive default and behaviour is identical to a normal DCA bot.
+- **The orchestrator emits the rescue orders.** While rescue is active, the shared Rust
+  orchestrator generates the two-sided recovery/reverse grid instead of normal DCA entries and
+  the single take-profit, and uses `rescue_wallet_exposure_limit` in place of the normal cap for
+  that slot. At the flip trigger it emits the close-all plus the sized opposite-side reopen; when
+  a cap binds it emits either nothing (`hold`, the slot is frozen and keeps its position) or a
+  market close-all (`market_close`).
+
+### Known limitation: resting flip-order re-emission
+
+There is a documented follow-up in the live path. The flip (close-all + opposite reopen) and the
+`market_close` are emitted as ideal orders, but the rescue state only advances once the
+resulting fills are processed and reconstruction flips the side on the next cycle. While those
+flip orders are still **resting unfilled** (or only partially filled), each tick re-emits the
+same close + reopen at the same price and quantity until reconstruction catches up. The
+re-emitted orders are intended to be idempotent to a price/quantity-matching reconciler (an
+identical order is treated as already placed), but this interaction has **not yet been verified
+end-to-end against a live order reconciler**. Until that verification exists, treat live rescue
+flips as experimental: run on a small allocation first and watch order activity around a flip.

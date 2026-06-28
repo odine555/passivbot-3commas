@@ -201,6 +201,37 @@ See the dedicated guide:
 
 1. [Equity Hard Stop Loss](equity_hard_stop_loss.md)
 
+### E. Rescue Grid (`bot.{long,short}.rescue_*`)
+
+Rescue Grid is an optional, **experimental** recovery mechanism that targets the same "stuck"
+problem from a different angle. Instead of slowly realizing losses (Auto-Unstuck) or halting
+the side (HSL), rescue keeps trading the stuck position: once a DCA position has exhausted its
+safety orders under water, it overlays a two-sided grid that banks round-trip spread in the
+favorable direction and, at the deepest adverse rung, **flips** the position to the opposite
+side, sized so its own recovery grid would break even the accumulated debt on a retrace.
+
+Why this needs strict ceilings:
+
+- **It diverges if pressed.** Each consecutive adverse flip grows notional by roughly 1.9x and
+  widens the favorable move needed to clear the debt. A monotonic adverse run therefore escalates
+  exposure quickly — it is not a save-all.
+- **Dedicated exposure ceiling.** While rescue is active, the normal `total_wallet_exposure_limit`
+  crop is bypassed for that slot and replaced by `rescue_wallet_exposure_limit` (default `10.0`).
+  This is a deliberately higher ceiling so rescue has room to size flips, which is exactly why it
+  must be set conservatively for your account.
+- **Flip cap.** `rescue_max_flips` (default `5`) hard-stops the flip count. In practice the
+  exposure ceiling usually binds first, around flip 3-4.
+- **Terminate modes.** When either cap binds, `rescue_on_terminate` decides the outcome:
+  `hold` keeps the position and stops placing any further orders (a frozen bag you then manage
+  manually), while `market_close` realizes the loss immediately and returns the symbol to normal
+  DCA.
+
+Treat rescue as a high-risk, experimental tool. It can recover positions that would otherwise
+stay stuck, but a sufficiently adverse, trend-only market will drive it into its caps and
+realize (or hold) a large loss. As with Auto-Unstuck's black-swan weakness, **human
+intervention remains the final backstop.** See [Rescue Grid](rescue_grid.md) for the full
+mechanism and a worked example.
+
 ---
 
 ## 4. Bankruptcy & Liquidation Technicals

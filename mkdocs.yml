@@ -13,6 +13,7 @@ nav:
   - Backtesting: backtesting.md
   - Suite Examples: suite_examples.md
   - Optimizing: optimizing.md
+  - Rescue Grid: rescue_grid.md
   - Tools: tools.md
   - Forager: forager.md
   - Risk Management: risk_management.md

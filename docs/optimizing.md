@@ -255,6 +255,22 @@ Trade-offs:
 - Intra-interval fill ordering is lost (fills occur only at the aggregated bar boundaries).
 - Metrics are still time-correct because analysis uses timestamps rather than bar indices.
 
+### Rescue Grid Parameters
+
+If you enable the experimental [Rescue Grid](rescue_grid.md) recovery mode, only three of its
+parameters are exposed to the optimizer, with side-specific prefixes:
+
+1. `long_n_rescue_fav` / `short_n_rescue_fav` — recovery grid rung count, default bounds `[4, 20]` (step `1`).
+2. `long_n_rescue_rev` / `short_n_rescue_rev` — reverse grid rung count, default bounds `[2, 10]` (step `1`).
+3. `long_rescue_grid_step_scale` / `short_rescue_grid_step_scale` — per-flip break-even multiplier, default bounds `[1.0, 1.5]`.
+
+The remaining `rescue_*` parameters (`rescue_enabled`, `rescue_trigger_so_index`,
+`rescue_recovery_coverage`, `rescue_wallet_exposure_limit`, `rescue_max_flips`,
+`rescue_on_terminate`) are behavioural / safety settings and are intentionally **not** part of
+the default optimize bounds; set them directly under `bot.{long,short}`. Because rescue is off
+by default (`rescue_enabled = false`), these bounds only matter once rescue is enabled in the
+config or seed pool.
+
 ### Fine-Tuning Specific Parameters
 
 When you only want to adjust a handful of parameters and keep everything else fixed, use

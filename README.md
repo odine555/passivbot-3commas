@@ -30,6 +30,13 @@ The Forager feature dynamically chooses which approved markets may open position
 ### Unstucking Mechanism
 Passivbot manages underperforming, or "stuck", positions by realizing small losses over time. If multiple positions are stuck, the bot prioritizes positions with the smallest gap between the entry price and current market price for "unstucking". Losses are limited by ensuring that the account balance does not fall under a set percentage below the past peak balance.  
 
+### Rescue Grid (recovery mode)
+Rescue Grid is an optional, experimental recovery mode for the 3commas-style DCA build. When a DCA position exhausts its safety orders and is still under water, rescue overlays a two-sided grid on the position: a *recovery* grid in the favorable direction that banks round-trip spread to chip away at the loss, and a *reverse* grid in the adverse direction whose deepest rung is a **flip trigger**. If price runs fully adverse to that trigger, rescue closes the position, books the loss as carried *debt*, and opens the opposite side, sized so that its own recovery grid would break even the accumulated debt on a retrace. It can flip several times.
+
+Enable it per side with `bot.{long,short}.rescue_enabled = true`. The behaviour is shaped by nine `rescue_*` parameters (grid rung counts `n_rescue_fav` / `n_rescue_rev`, the per-flip step scale `rescue_grid_step_scale`, recovery coverage, the flip cap, the dedicated wallet-exposure ceiling, and the terminate mode); all order sizes, spacings, the break-even distance, debt, and flip count are *derived*, never configured. See [Rescue Grid](docs/rescue_grid.md) and the parameter reference in [Bot Configuration](docs/config.bot.md).
+
+> :warning: **Rescue is experimental and not a save-all.** Each adverse flip grows notional by roughly 1.9x and widens the favorable move needed to recover, so a run of consecutive adverse flips *diverges*. That is exactly why rescue is hard-capped by both `rescue_max_flips` and a dedicated `rescue_wallet_exposure_limit`; when a cap binds, `rescue_on_terminate` either holds the position (no further orders) or closes it at market. Size positions and caps conservatively and treat this mode as high-risk.
+
 ## Installation
 
 To install Passivbot and its dependencies, follow the steps below.
@@ -191,6 +198,7 @@ Useful entry points:
 - [Troubleshooting](docs/troubleshooting.md)
 - [Backtesting](docs/backtesting.md)
 - [Optimizing](docs/optimizing.md)
+- [Rescue Grid (recovery mode)](docs/rescue_grid.md)
 - [Metrics reference](docs/metrics.md)
 - [Equity Hard Stop Loss](docs/equity_hard_stop_loss.md)
 - [Monitor output](docs/monitor.md)

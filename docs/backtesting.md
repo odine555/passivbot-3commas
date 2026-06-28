@@ -64,6 +64,41 @@ The workspace includes `config`, `analysis`, `fills`, `balance_and_equity`, `hlc
 `timestamps`, `btc_usd_prices`, `coins`, `market_settings`, `candles_for_coin`, and
 `plot_fills_for_coin`.
 
+## Rescue Grid in Backtests
+
+The same Rust engine drives both live and backtest, so the experimental
+[Rescue Grid](rescue_grid.md) recovery mode is fully simulated when
+`bot.{long,short}.rescue_enabled = true`. During a backtest the rescue state machine is
+driven from realized fills (not assumptions about which rungs "should" have filled), so its
+behaviour over an oscillating path is path-accurate:
+
+- **Arm** when the configured trigger safety order (`rescue_trigger_so_index`, default the
+  last one) fills while the position is under water. The break-even distance `b` is derived
+  from the position's average entry versus the arming price.
+- **Re-fill / bank** while price stays inside the grid band: a recovery fill places an add one
+  level toward the anchor, an adverse add places a recovery one level toward the anchor, so
+  oscillation banks round-trip spread and speeds recovery without changing the rung prices or
+  sizes within a cycle.
+- **Flip** when price reaches the deepest reverse rung (the flip-trigger price). The whole
+  position is closed at that price, its realized loss is folded into the carried debt, the
+  opposite side is opened sized for recovery, `b` scales by `rescue_grid_step_scale`, and the
+  flip count increments.
+- **Recover** when the position returns to flat with enough banked profit to cover the debt:
+  rescue deactivates and normal DCA resumes on that symbol.
+- **Terminate** when `rescue_max_flips` or `rescue_wallet_exposure_limit` binds (whichever
+  comes first): `rescue_on_terminate = hold` freezes the slot (position kept, no further
+  orders) while `market_close` closes at market and ends rescue.
+
+These behaviours have been verified in the engine's backtest scenarios: arming at the
+predicted grid prices, a monotonic adverse path flipping at the predicted prices with debt and
+notional matching the documented two-flip math, oscillation banking spread with no spurious
+flip, the caps terminating in both modes, and clean recovery. See
+[Rescue Grid](rescue_grid.md) for the worked numbers.
+
+> The flip and any `market_close` are simulated at the trigger / close price using taker fees.
+> As with all backtests, real-world slippage, funding, and partial-fill timing can differ from
+> the simulation; treat rescue backtests as directional, not guaranteed.
+
 ## HLCV Data Contract
 
 Backtest and optimize data preparation follows one deterministic order:

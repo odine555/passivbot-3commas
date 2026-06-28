@@ -4,6 +4,23 @@ All notable user-facing changes will be documented in this file.
 
 ## Unreleased
 
+- Added an optional, experimental Rescue Grid recovery mode to the 3commas DCA
+  build, configured per side under `bot.{long,short}.rescue_*`. When a DCA
+  position exhausts its safety orders under water, rescue overlays a two-sided
+  grid that banks round-trip spread in the favorable direction and, at the
+  deepest adverse rung, flips the position to the opposite side sized so its own
+  recovery grid would break even the accumulated debt on a retrace. Adds nine
+  parameters — `rescue_enabled` (default `false`), `rescue_trigger_so_index`,
+  `n_rescue_fav`, `n_rescue_rev`, `rescue_grid_step_scale`,
+  `rescue_recovery_coverage`, `rescue_wallet_exposure_limit`, `rescue_max_flips`,
+  and `rescue_on_terminate` (`hold` / `market_close`); only `n_rescue_fav`,
+  `n_rescue_rev`, and `rescue_grid_step_scale` are optimizable. All grid sizes,
+  spacings, break-even distance, debt, anchor, and flip count are derived. Rescue
+  is hard-capped by `rescue_max_flips` and a dedicated
+  `rescue_wallet_exposure_limit` because consecutive adverse flips diverge
+  (~1.9x notional per flip). Verified in backtest; live flip/terminate emission
+  has a known re-emission follow-up (resting flip orders re-emit each tick until
+  fill-based state reconstruction flips the side). See `docs/rescue_grid.md`.
 - Added `live.limit_order_create_max_market_dist_pct` with a default of `0.8`
   so live skips limit-order creations far outside fresh market price bands
   instead of repeatedly submitting exchange-invalid deep orders.

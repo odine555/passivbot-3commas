@@ -203,6 +203,50 @@ Key HSL analysis metrics:
    - `hard_stop_restarts_long`
    - `hard_stop_restarts_short`
 
+### Rescue Grid (`bot.{long,short}.rescue_*`)
+
+Optional, **experimental** recovery mode. When a DCA position exhausts its safety orders
+while under water, rescue overlays a two-sided grid and can flip the position to the
+opposite side to recover the accumulated loss. It is configured per side, sits alongside
+the other `bot.{long,short}` parameters, and is disabled by default.
+
+- **rescue_enabled** (default `false`): Master switch for rescue on that side.
+- **rescue_trigger_so_index** (default `-1`): Which filled DCA safety order arms rescue; `-1` means the last safety order.
+- **n_rescue_fav** (default `10`): Recovery (favorable-direction) grid rung count. Optimizable, bounds `[4, 20]`.
+- **n_rescue_rev** (default `5`): Reverse (adverse-direction) grid rung count; the deepest rung is the flip trigger. Optimizable, bounds `[2, 10]`.
+- **rescue_grid_step_scale** (default `1.1`): Break-even distance multiplier applied at each flip. Optimizable, bounds `[1.0, 1.5]`.
+- **rescue_recovery_coverage** (default `1.05`): Flip is sized so a full recovery sweep nets `coverage x debt` (the buffer above `1.0` covers fees/funding).
+- **rescue_wallet_exposure_limit** (default `10.0`): Dedicated wallet-exposure ceiling used instead of the normal limit while rescue is active.
+- **rescue_max_flips** (default `5`): Hard cap on flips before terminating.
+- **rescue_on_terminate** (default `"hold"`): At a cap, either `hold` (keep position, place no more orders) or `market_close` (close at market and end rescue).
+
+All order sizes, spacings, the break-even distance, carried debt, anchor, and flip count are
+**derived** from the live position and the parameters above; they are never configured.
+To enable rescue on the long side, set `rescue_enabled` and (optionally) adjust the rung
+counts:
+
+```json
+"bot": {
+  "long": {
+    "rescue_enabled": true,
+    "rescue_trigger_so_index": -1,
+    "n_rescue_fav": 10,
+    "n_rescue_rev": 5,
+    "rescue_grid_step_scale": 1.1,
+    "rescue_recovery_coverage": 1.05,
+    "rescue_wallet_exposure_limit": 10.0,
+    "rescue_max_flips": 5,
+    "rescue_on_terminate": "hold"
+  }
+}
+```
+
+See [Rescue Grid](rescue_grid.md) for the full lifecycle and a worked example, the parameter
+reference in [Bot Configuration Deep Dive](config.bot.md#rescue-grid-recovery-mode), and the
+risk discussion in [Risk Management](risk_management.md). Rescue is experimental and
+high-risk: consecutive adverse flips diverge, which is why the flip cap and dedicated
+exposure ceiling exist.
+
 ### General Parameters for Long and Short
 
 - **ema_span_0**, **ema_span_1**:
