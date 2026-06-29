@@ -15,7 +15,7 @@ from backtest_artifacts import (
     load_backtest_artifact_workspace,
     plot_fills_for_coin,
 )
-from plotting import create_forager_coin_figures
+from plotting import create_forager_coin_figures, plt
 
 
 def _save_npy_gz(path: Path, array: np.ndarray) -> None:
@@ -247,3 +247,76 @@ def test_load_backtest_artifact_fails_loudly_on_missing_cache_file(tmp_path):
 
     with pytest.raises(FileNotFoundError, match="hlcvs_file"):
         load_backtest_artifact(artifact_dir)
+
+
+def test_forager_coin_figure_separates_rescue_fills():
+    """plot_fills_forager / create_forager_coin_figures must not crash on rescue types
+    and should expose a rescue legend entry."""
+    timestamps = np.array(
+        [
+            int(ts.value // 1_000_000)
+            for ts in pd.date_range("2026-01-01 00:00:00", periods=5, freq="1min")
+        ],
+        dtype=np.int64,
+    )
+    hlcvs = np.zeros((5, 1, 4), dtype=float)
+    hlcvs[:, 0, 0] = [101.0, 102.0, 103.0, 104.0, 105.0]
+    hlcvs[:, 0, 1] = [99.0, 100.0, 101.0, 102.0, 103.0]
+    hlcvs[:, 0, 2] = [100.0, 101.0, 102.0, 103.0, 104.0]
+    hlcvs[:, 0, 3] = 1.0
+    fills = pd.DataFrame(
+        {
+            "coin": ["BTC", "BTC", "BTC", "BTC"],
+            "minute": [1, 2, 3, 4],
+            "timestamp": pd.to_datetime(timestamps[[1, 2, 3, 4]], unit="ms"),
+            "type": [
+                "entry_grid_normal_long",
+                "close_grid_long",
+                "rescue_reverse_entry_long",
+                "rescue_recovery_close_long",
+            ],
+            "qty": [1.0, -1.0, 1.0, -1.0],
+            "price": [100.5, 103.5, 99.5, 101.5],
+            "psize": [1.0, 0.0, 1.0, 0.0],
+            "pprice": [100.5, 0.0, 99.5, 0.0],
+        }
+    )
+
+    figs = create_forager_coin_figures(["BTC"], fills, hlcvs, timestamps=timestamps)
+    assert "BTC" in figs
+    try:
+        ax = figs["BTC"].axes[0]
+        labels = [c.get_label() for c in ax.collections + ax.lines]
+        assert any("rescue" in label.lower() for label in labels)
+    finally:
+        plt.close(figs["BTC"])
+
+
+def test_plot_fills_for_coin_plots_rescue_rows(tmp_path):
+    """The notebook helper plot_fills_for_coin renders rescue fills distinctly."""
+    artifact_dir = _write_artifact(tmp_path)
+    fills_path = artifact_dir / "fills.csv"
+    base_fills = pd.read_csv(fills_path)
+    rescue_rows = pd.DataFrame(
+        {
+            "timestamp": ["2026-01-01 00:02:00", "2026-01-01 00:03:00"],
+            "coin": ["BTC", "BTC"],
+            "type": ["rescue_reverse_entry_long", "rescue_recovery_close_long"],
+            "qty": [1.0, -1.0],
+            "price": [99.5, 101.5],
+            "psize": [1.0, 0.0],
+            "pprice": [99.5, 0.0],
+            "pnl": [0.0, 1.0],
+        }
+    )
+    combined = pd.concat([base_fills, rescue_rows], ignore_index=True)
+    combined.to_csv(fills_path, index=False)
+
+    artifact = load_backtest_artifact(artifact_dir)
+    fig = plot_fills_for_coin(artifact, "BTC")
+    try:
+        ax = fig.axes[0]
+        labels = [c.get_label() for c in ax.collections + ax.lines]
+        assert any("rescue" in label.lower() for label in labels)
+    finally:
+        plt.close(fig)

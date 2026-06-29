@@ -147,6 +147,10 @@ def _filter_limit_order_creations_by_market_distance(
         if str(order.get("type", "limit")).lower() == "market":
             kept.append(order)
             continue
+        pb_type = str(order.get("pb_order_type", "")).lower()
+        if pb_type.startswith("rescue_"):
+            kept.append(order)
+            continue
         symbol = str(order.get("symbol") or "")
         snapshot = snapshots.get(symbol)
         if snapshot is None or not snapshot.is_valid():

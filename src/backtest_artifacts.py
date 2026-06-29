@@ -260,11 +260,27 @@ def _plot_fill_markers(ax, fills: pd.DataFrame) -> None:
     fills = fills.copy()
     fills["price"] = pd.to_numeric(fills["price"], errors="raise")
     type_series = fills["type"].astype(str)
+    is_rescue = type_series.str.contains("rescue", regex=False)
 
     marker_specs = [
         (
+            "rescue_entry",
+            is_rescue & type_series.str.contains("entry", regex=False),
+            "darkorange",
+            "^",
+            "rescue entries",
+        ),
+        (
+            "rescue_close",
+            is_rescue & type_series.str.contains("close", regex=False),
+            "k",
+            "*",
+            "rescue closes",
+        ),
+        (
             "long_entry",
-            type_series.str.contains("long", regex=False)
+            ~is_rescue
+            & type_series.str.contains("long", regex=False)
             & type_series.str.contains("entry", regex=False),
             "b",
             ".",
@@ -272,7 +288,8 @@ def _plot_fill_markers(ax, fills: pd.DataFrame) -> None:
         ),
         (
             "long_close",
-            type_series.str.contains("long", regex=False)
+            ~is_rescue
+            & type_series.str.contains("long", regex=False)
             & type_series.str.contains("close", regex=False),
             "r",
             ".",
@@ -280,7 +297,8 @@ def _plot_fill_markers(ax, fills: pd.DataFrame) -> None:
         ),
         (
             "short_entry",
-            type_series.str.contains("short", regex=False)
+            ~is_rescue
+            & type_series.str.contains("short", regex=False)
             & type_series.str.contains("entry", regex=False),
             "m",
             "x",
@@ -288,7 +306,8 @@ def _plot_fill_markers(ax, fills: pd.DataFrame) -> None:
         ),
         (
             "short_close",
-            type_series.str.contains("short", regex=False)
+            ~is_rescue
+            & type_series.str.contains("short", regex=False)
             & type_series.str.contains("close", regex=False),
             "c",
             "x",
@@ -304,7 +323,7 @@ def _plot_fill_markers(ax, fills: pd.DataFrame) -> None:
                 c=color,
                 marker=marker,
                 label=label,
-                zorder=3.0,
+                zorder=4.0 if _name.startswith("rescue") else 3.0,
             )
 
 

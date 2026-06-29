@@ -3120,6 +3120,21 @@ async def test_orchestrator_snapshot_payload_includes_exchange_fees(monkeypatch)
         def _pb_mode_to_orchestrator_mode(self, mode):
             return pb_mod.Passivbot._pb_mode_to_orchestrator_mode(self, mode)
 
+        def _dca_state_for_position(self, symbol, pside, pos):
+            return {"dca_base_price": 0.0, "dca_entry_fills": 0.0}
+
+        def _rescue_state_for_position(self, symbol, pside, pos):
+            return {
+                "rescue_active": False,
+                "rescue_side": pside,
+                "rescue_flip_count": 0,
+                "rescue_debt": 0.0,
+                "rescue_anchor_price": 0.0,
+                "rescue_b": 0.0,
+                "rescue_base_qty": 0.0,
+                "rescue_frozen": False,
+            }
+
     snapshot = {
         "symbols": [symbol],
         "last_prices": {symbol: 100.0},

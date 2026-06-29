@@ -646,7 +646,9 @@ def reconstruct_rescue_states(events, params, balance=0.0, c_mult=1.0):
     flip_count = 0
     frozen = False
     flat_pending = False
+    flip_price = 0.0
     pending_close_pnl_fee = 0.0
+    last_psize = {"long": 0.0, "short": 0.0}
 
     def _apply_caps():
         nonlocal frozen
@@ -682,10 +684,52 @@ def reconstruct_rescue_states(events, params, balance=0.0, c_mult=1.0):
         if is_entry:
             dca_fills[pside] += 1
 
+        # Helper: is this fill an entry on the given side? Some exchanges may
+        # report an incorrect ``position_side`` on a flip reopen, so also trust
+        # the order/fill type strings and the signed quantity.
+        pb_order_type = str(_rescue_fill_get(ev, "pb_order_type", "")).lower()
+        order_type = str(_rescue_fill_get(ev, "order_type", "")).lower()
+        qty_raw = float(_rescue_fill_get(ev, "qty", 0.0) or 0.0)
+
+        def _is_opposite_entry(opp_side: str, *, allow_pside: bool = True, require_flat_cur_side: bool = False) -> bool:
+            # Primary: event position_side clearly places the entry on opp_side.
+            if allow_pside and is_entry and pside != opp_side:
+                return True
+            # Fallbacks for mis-reported position_side:
+            #   * pb_order_type / order_type may be tagged rescue_flip_entry_*.
+            #   * a sell with negative qty is a short entry
+            #   * a buy with positive qty is a long entry
+            type_is_entry = (
+                pb_order_type.startswith("rescue_flip_entry_")
+                or pb_order_type.startswith("rescue_reverse_entry_")
+                or order_type.startswith("rescue_flip_entry_")
+                or order_type.startswith("rescue_reverse_entry_")
+            )
+            if type_is_entry:
+                # Tagged rescue entry is opposite the previously rescued side.
+                return True
+            # Direction/qty heuristics when position_side is untrustworthy.
+            # To avoid mis-classifying a close-all on the current side as a flip,
+            # only trust direction/qty when the current side is already flat
+            # (i.e. this cannot be a close of the current position).
+            if require_flat_cur_side and last_psize.get(cur_side, 0.0) > eps:
+                return False
+            # A sell with negative qty opens short.
+            if opp_side == "short":
+                return direction == "sell" and qty_raw < -eps
+            # A buy with positive qty opens long.
+            if opp_side == "long":
+                return direction == "buy" and qty_raw > eps
+            return False
+
         handled_as_flip = False
         # --- resolve a pending flat (close-all): flip vs recovery -------------
+        # When the event position_side is missing/incorrect, the reopen may look
+        # like a close on the original side (pside == cur_side, not is_entry).
+        # Detect this before the normal bookkeeping path.
+        opp_side = "short" if cur_side == "long" else "long"
         if active and flat_pending:
-            is_opp_open = is_entry and pside != cur_side and psize_after > eps
+            is_opp_open = _is_opposite_entry(opp_side, require_flat_cur_side=False)
             if is_opp_open:
                 # FLIP: fold the close-all loss into debt, open opposite side.
                 prev_step_scale = float(
@@ -693,11 +737,12 @@ def reconstruct_rescue_states(events, params, balance=0.0, c_mult=1.0):
                 )
                 debt += -pending_close_pnl_fee
                 flip_count += 1
-                cur_side = pside
-                anchor = price
-                base_qty = psize_after
+                cur_side = "short" if cur_side == "long" else "long"
+                anchor = flip_price if flip_price > 0.0 else price
+                base_qty = max(psize_after, abs(qty_raw))
                 b = b * prev_step_scale
                 flat_pending = False
+                flip_price = 0.0
                 pending_close_pnl_fee = 0.0
                 handled_as_flip = True
                 _apply_caps()
@@ -707,6 +752,7 @@ def reconstruct_rescue_states(events, params, balance=0.0, c_mult=1.0):
                 active = False
                 cur_side = None
                 flat_pending = False
+                flip_price = 0.0
                 pending_close_pnl_fee = 0.0
                 frozen = False
 
@@ -717,12 +763,41 @@ def reconstruct_rescue_states(events, params, balance=0.0, c_mult=1.0):
                 if psize_after <= eps:
                     # close-all -> defer (flip folds to debt, recovery banks).
                     flat_pending = True
+                    flip_price = price
                     pending_close_pnl_fee = pnl + fee
                 else:
                     # partial / round-trip close banks immediately.
                     banked += pnl + fee
             # entry on the rescued side = reverse-grid add (grows the position);
             # base_qty / b are fixed within the cycle, nothing to update.
+
+        # --- opposite-side bookkeeping when position_side is mis-reported ------
+        # If rescue is active and the event looks like a close on the original
+        # side but the signed quantity / type strings indicate an opposite-side
+        # entry, treat it as the flip reopen here. Do not trust the reported
+        # position_side here (pside == cur_side by definition) and require the
+        # current side to be flat so that a close-all is not mis-classified.
+        if (
+            active
+            and not handled_as_flip
+            and pside == cur_side
+            and _is_opposite_entry(opp_side, allow_pside=False, require_flat_cur_side=True)
+        ):
+            # FLIP under mis-reported position_side.
+            prev_step_scale = float(
+                params.get(cur_side, {}).get("rescue_grid_step_scale", 1.0) or 1.0
+            )
+            debt += -pending_close_pnl_fee if flat_pending else 0.0
+            flip_count += 1
+            cur_side = "short" if cur_side == "long" else "long"
+            anchor = flip_price if flip_price > 0.0 else price
+            base_qty = max(psize_after, abs(qty_raw))
+            b = b * prev_step_scale
+            flat_pending = False
+            flip_price = 0.0
+            pending_close_pnl_fee = 0.0
+            handled_as_flip = True
+            _apply_caps()
 
         # --- arming ----------------------------------------------------------
         if not active:
@@ -759,6 +834,9 @@ def reconstruct_rescue_states(events, params, balance=0.0, c_mult=1.0):
         # reset DCA counter when a side goes flat (fresh DCA cycle next time).
         if psize_after <= eps:
             dca_fills[pside] = 0
+
+        # Remember position size after this event for the next iteration.
+        last_psize[pside] = psize_after
 
     # End of stream: a still-pending flat with no reopen is a recovery.
     if active and flat_pending:
@@ -10621,13 +10699,51 @@ class Passivbot:
         # Safety: only report active/frozen for a side that actually holds a
         # position (an empty/partial fill cache must not fabricate a rescue).
         try:
-            psize_now = abs(float(pos.get("size", 0.0) or 0.0))
+            psize_now = float(pos.get("size", 0.0) or 0.0)
         except Exception:
             psize_now = 0.0
-        if psize_now <= 0.0 and (
+        abs_psize_now = abs(psize_now)
+        if abs_psize_now == 0.0 and (
             state.get("rescue_active") or state.get("rescue_frozen")
         ):
             return default
+        # Reconstruction may place the active cycle on the wrong side because of
+        # exchange-reported position_side quirks or a delayed reopen. If the live
+        # position is non-zero on the opposite side and that opposite side holds
+        # the active/frozen state, relocate it here rather than leaving a one-sided
+        # phantom state.
+        if (
+            state.get("rescue_active") or state.get("rescue_frozen")
+        ) and abs_psize_now > 0.0:
+            opp = "short" if pside == "long" else "long"
+            opp_state = states.get(opp, default)
+            if (
+                not opp_state.get("rescue_active")
+                and not opp_state.get("rescue_frozen")
+                and (
+                    (pside == "long" and psize_now < 0.0)
+                    or (pside == "short" and psize_now > 0.0)
+                )
+            ):
+                logging.warning(
+                    "[rescue] reconstructed state active on %s but live position "
+                    "is on %s for %s; relocating active rescue state",
+                    pside,
+                    opp,
+                    symbol,
+                )
+                opp_state = dict(opp_state)
+                opp_state["rescue_active"] = state.get("rescue_active", False)
+                opp_state["rescue_frozen"] = state.get("rescue_frozen", False)
+                opp_state["rescue_side"] = opp
+                opp_state["rescue_flip_count"] = state.get("rescue_flip_count", 0)
+                opp_state["rescue_debt"] = state.get("rescue_debt", 0.0)
+                opp_state["rescue_anchor_price"] = state.get(
+                    "rescue_anchor_price", 0.0
+                )
+                opp_state["rescue_b"] = state.get("rescue_b", 0.0)
+                opp_state["rescue_base_qty"] = state.get("rescue_base_qty", 0.0)
+                return opp_state
         return state
 
     async def calc_ideal_orders_orchestrator_from_snapshot(

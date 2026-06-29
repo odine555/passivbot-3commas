@@ -21,9 +21,23 @@ All notable user-facing changes will be documented in this file.
   (~1.9x notional per flip). Verified in backtest; live flip/terminate emission
   has a known re-emission follow-up (resting flip orders re-emit each tick until
   fill-based state reconstruction flips the side). See `docs/rescue_grid.md`.
+- Rescue-grid fills are now plotted distinctly from regular DCA fills: rescue
+  entries are rendered as darkorange triangles (`^`), rescue closes as black
+  stars (`*`), and the `backtest_artifacts.plot_fills_for_coin` notebook helper
+  includes them in the legend instead of coloring them as normal long/short
+  fills. The underlying `fills.csv` already labels rescue fills with their
+  dedicated `rescue_*` order-type strings.
 - Added `live.limit_order_create_max_market_dist_pct` with a default of `0.8`
   so live skips limit-order creations far outside fresh market price bands
   instead of repeatedly submitting exchange-invalid deep orders.
+- Fixed live rescue-grid state reconstruction so flip detection survives
+  exchange fills that report `psize_after == 0`, the wrong `position_side`, or
+  have non-position events (e.g. funding) between the close-all and the reopen.
+  `_rescue_state_for_position` now also relocates an active reconstructed state
+  to the side that actually holds the live position and logs a warning.
+- Fixed live rescue-grid order emission so rescue orders are exempt from
+  `live.limit_order_create_max_market_dist_pct`; the gate was silently dropping
+  far recovery-grid levels after repeated flips.
 - Fixed Bitget UTA / Elite close-order placement by omitting the one-way-only
   `reduceOnly` flag from hedge-mode v3 orders that already send `posSide`.
 - Fixed Bitget UTA / Elite open-order normalization so hedge-mode close orders
