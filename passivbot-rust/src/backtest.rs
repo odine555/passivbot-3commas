@@ -3360,6 +3360,14 @@ impl<'a> Backtest<'a> {
     /// Execute a flip: close-all (loss → debt), scale `b`, size the opposite position
     /// for recovery, open it at `flip_price` (the new anchor), and relocate rescue
     /// state to the opposite slot with `flip_count += 1`.
+    ///
+    /// The wallet-exposure / flip-count cap is evaluated PREDICTIVELY here (mirroring
+    /// `orchestrator.rs::try_rescue_flip`): the would-be flipped position's size and
+    /// wallet exposure are computed WITHOUT mutating state, and if the flip would breach
+    /// `rescue_max_flips` or `rescue_wallet_exposure_limit` the flip is suppressed —
+    /// `market_close` closes the current position with no reopen, `hold` freezes the
+    /// current (still within-ceiling) position. This guarantees no position with
+    /// `we >= rescue_wel` is ever opened or held in a backtest, matching the live path.
     fn rescue_execute_flip(
         &mut self,
         k: usize,
@@ -3368,31 +3376,107 @@ impl<'a> Backtest<'a> {
         state: RescueSideState,
         flip_price: f64,
     ) {
-        let close_order_type = match side {
-            LONG => OrderType::CloseGridLong,
-            _ => OrderType::CloseGridShort,
-        };
-        let realized_loss = self.rescue_realize_close_all(k, idx, side, flip_price, close_order_type);
-        let new_debt = state.debt + realized_loss;
+        let cmult = self.exchange_params_list[idx].c_mult;
+        let qty_step = self.exchange_params_list[idx].qty_step;
+        let fee_rate = self.backtest_params.taker_fee;
 
-        let (n_fav, coverage, step_scale) = {
+        let (n_fav, coverage, step_scale, max_flips, rescue_wel, on_terminate) = {
             let bp = self.bp(idx, side);
             (
                 bp.n_rescue_fav,
                 bp.rescue_recovery_coverage,
                 bp.rescue_grid_step_scale,
+                bp.rescue_max_flips,
+                bp.rescue_wallet_exposure_limit,
+                bp.rescue_on_terminate.clone(),
             )
         };
+
+        // --- Predictive sizing (no state mutation): compute the prospective realized
+        // loss of closing the current position at the flip price (pure pnl + taker fee,
+        // exactly as try_rescue_flip), the carried debt, scaled b, the would-be opposite
+        // qty, and its wallet exposure — all before deciding whether to flip.
+        let Some(pos) = self.rescue_position_copy(side, idx) else {
+            return;
+        };
+        if pos.size == 0.0 {
+            return;
+        }
+        let close_qty = -pos.size; // signed: long close < 0, short close > 0
+        let pnl = match side {
+            LONG => calc_pnl_long(pos.price, flip_price, close_qty, cmult),
+            _ => calc_pnl_short(pos.price, flip_price, close_qty, cmult),
+        };
+        let fee = -qty_to_cost(close_qty, flip_price, cmult) * fee_rate;
+        let realized_loss = -(pnl + fee);
+        let new_debt = state.debt + realized_loss;
         let b_new = crate::rescue::rescue_scaled_b(state.b, step_scale);
         let new_side = if side == LONG { SHORT } else { LONG };
-
-        let cmult = self.exchange_params_list[idx].c_mult;
-        let qty_step = self.exchange_params_list[idx].qty_step;
-        let fee_rate = self.backtest_params.taker_fee;
         let qty_new_abs = round_(
             crate::rescue::rescue_flip_qty(new_debt, b_new, n_fav, coverage, flip_price),
             qty_step,
         );
+        let we_new = if qty_new_abs > 0.0 {
+            calc_wallet_exposure(
+                cmult,
+                self.balance.usd_total_balance,
+                qty_new_abs,
+                flip_price,
+            )
+        } else {
+            0.0
+        };
+
+        // --- Predictive cap evaluation (mirrors try_rescue_flip). The flip about to be
+        // emitted is flip number `flip_count + 1`; the strict `>` lets exactly
+        // `rescue_max_flips` flips occur. The `>=` WE cap means the breaching position is
+        // never opened/held — we keep or close the current within-ceiling position.
+        let flip_cap = (state.flip_count.max(0) as usize) + 1 > max_flips;
+        let we_cap = rescue_wel > 0.0 && we_new >= rescue_wel;
+        if flip_cap || we_cap {
+            if std::env::var("RESCUE_DEBUG").is_ok() {
+                let sidestr = if side == LONG { "long" } else { "short" };
+                let cause = if flip_cap { "max_flips" } else { "wallet_exposure" };
+                eprintln!(
+                    "[RESCUE-TERMINATE] k={} idx={} side={} cause={} mode={} flip_count={} max_flips={} we_new={:.6} rescue_wel={:.6} debt={:.6} banked={:.6}",
+                    k, idx, sidestr, cause, on_terminate, state.flip_count, max_flips, we_new, rescue_wel, state.debt, state.banked_profit
+                );
+            }
+            if on_terminate == "market_close" {
+                // Close the whole current position at the flip price; NO reopen.
+                let close_order_type = match side {
+                    LONG => OrderType::CloseGridLong,
+                    _ => OrderType::CloseGridShort,
+                };
+                self.rescue_realize_close_all(k, idx, side, flip_price, close_order_type);
+                self.rescue_deactivate(side, idx);
+            } else {
+                // "hold": do NOT close, do NOT open. Freeze the current (within-ceiling)
+                // position on its own side so all further rescue orders are suppressed.
+                match side {
+                    LONG => {
+                        if let Some(s) = self.rescue_tracking.long.get_mut(&idx) {
+                            s.terminated_hold = true;
+                        }
+                    }
+                    _ => {
+                        if let Some(s) = self.rescue_tracking.short.get_mut(&idx) {
+                            s.terminated_hold = true;
+                        }
+                    }
+                }
+            }
+            return;
+        }
+
+        // --- Normal flip: realize the close (loss already folded into `new_debt`), then
+        // open the sized opposite position at the flip price and relocate rescue state.
+        let close_order_type = match side {
+            LONG => OrderType::CloseGridLong,
+            _ => OrderType::CloseGridShort,
+        };
+        let _ = self.rescue_realize_close_all(k, idx, side, flip_price, close_order_type);
+
         // T16 observability hook (quiet behind RESCUE_DEBUG): print flip event so the
         // verify worker can extract flip price, realized loss, debt, scaled b and the
         // sized opposite-side notional and cross-check against the 03 formulas.
