@@ -634,9 +634,11 @@ def plot_fills_forager(
     ax.plot(candle_x, hlcc_high, "g-.", alpha=0.6, label="high", zorder=0.8)
 
     type_series = fdfc["type"].astype(str)
-    longs = fdfc[type_series.str.contains("long", regex=False)]
-    shorts = fdfc[type_series.str.contains("short", regex=False)]
-    if len(longs) == 0 and len(shorts) == 0:
+    is_rescue = type_series.str.contains("rescue", regex=False)
+    longs = fdfc[type_series.str.contains("long", regex=False) & ~is_rescue]
+    shorts = fdfc[type_series.str.contains("short", regex=False) & ~is_rescue]
+    rescues = fdfc[is_rescue]
+    if len(longs) == 0 and len(shorts) == 0 and len(rescues) == 0:
         return plt
     legend = ["close", "low", "high"]
     if len(longs) > 0:
@@ -737,6 +739,37 @@ def plot_fills_forager(
                 "pprices_short",
             ]
         )
+    if len(rescues) > 0:
+        rescues_types = rescues["type"].astype(str)
+        rescues_price_series = rescues["price"]
+        if fast and np.issubdtype(rescues_price_series.dtype, np.number):
+            rescues_price = rescues_price_series.to_numpy(copy=False)
+        else:
+            rescues_price = pd.to_numeric(rescues_price_series, errors="coerce").to_numpy()
+        mask_close = rescues_types.str.contains("close", regex=False).to_numpy()
+        mask_entry = ~mask_close
+        if mask_entry.any():
+            ax.scatter(
+                _x_for_fills(rescues.iloc[np.flatnonzero(mask_entry)]),
+                rescues_price[mask_entry],
+                c="darkorange",
+                marker="^",
+                s=70,
+                zorder=4.0,
+                label="rescue_entry",
+            )
+            legend.append("rescue_entry")
+        if mask_close.any():
+            ax.scatter(
+                _x_for_fills(rescues.iloc[np.flatnonzero(mask_close)]),
+                rescues_price[mask_close],
+                c="k",
+                marker="*",
+                s=90,
+                zorder=4.0,
+                label="rescue_close",
+            )
+            legend.append("rescue_close")
     ax.legend(legend)
     ax.set_xlabel("datetime" if minute_to_datetime is not None else "minute")
     return plt

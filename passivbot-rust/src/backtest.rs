@@ -3445,8 +3445,8 @@ impl<'a> Backtest<'a> {
             if on_terminate == "market_close" {
                 // Close the whole current position at the flip price; NO reopen.
                 let close_order_type = match side {
-                    LONG => OrderType::CloseGridLong,
-                    _ => OrderType::CloseGridShort,
+                    LONG => OrderType::RescueFlipCloseLong,
+                    _ => OrderType::RescueFlipCloseShort,
                 };
                 self.rescue_realize_close_all(k, idx, side, flip_price, close_order_type);
                 self.rescue_deactivate(side, idx);
@@ -3472,8 +3472,8 @@ impl<'a> Backtest<'a> {
         // --- Normal flip: realize the close (loss already folded into `new_debt`), then
         // open the sized opposite position at the flip price and relocate rescue state.
         let close_order_type = match side {
-            LONG => OrderType::CloseGridLong,
-            _ => OrderType::CloseGridShort,
+            LONG => OrderType::RescueFlipCloseLong,
+            _ => OrderType::RescueFlipCloseShort,
         };
         let _ = self.rescue_realize_close_all(k, idx, side, flip_price, close_order_type);
 
@@ -3520,8 +3520,8 @@ impl<'a> Backtest<'a> {
                 }
             }
             let open_order_type = match new_side {
-                LONG => OrderType::EntryGridNormalLong,
-                _ => OrderType::EntryGridNormalShort,
+                LONG => OrderType::RescueFlipEntryLong,
+                _ => OrderType::RescueFlipEntryShort,
             };
             self.rescue_push_fill(
                 k,
@@ -3595,8 +3595,8 @@ impl<'a> Backtest<'a> {
         }
         if on_terminate == "market_close" {
             let order_type = match side {
-                LONG => OrderType::CloseGridLong,
-                _ => OrderType::CloseGridShort,
+                LONG => OrderType::RescueFlipCloseLong,
+                _ => OrderType::RescueFlipCloseShort,
             };
             let price = self.hlcvs_value(k, idx, CLOSE).max(f64::EPSILON);
             self.rescue_realize_close_all(k, idx, side, price, order_type);

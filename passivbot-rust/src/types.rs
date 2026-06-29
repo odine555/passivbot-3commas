@@ -570,6 +570,24 @@ pub enum OrderType {
     CloseAutoReduceWelLong = 24,
     CloseAutoReduceWelShort = 25,
 
+    // --- Rescue-grid order types (Goal 2). Distinct identity so fills.csv can tell
+    // a rescue order from a normal DCA entry/grid/close. snake_case strings all
+    // contain `rescue` + `long`/`short` + `entry`/`close` so downstream
+    // `.str.contains(...)` side/direction routing keeps working unchanged.
+    //
+    //   * recovery-grid close  — favorable-direction closes banking toward the anchor
+    //   * reverse-grid entry    — adverse-direction adds (the flipped side's grid entries)
+    //   * flip close            — closing the red bag at the flip trigger
+    //   * flip entry            — opening the sized opposite side on a flip
+    RescueRecoveryCloseLong = 26,
+    RescueRecoveryCloseShort = 27,
+    RescueReverseEntryLong = 28,
+    RescueReverseEntryShort = 29,
+    RescueFlipCloseLong = 30,
+    RescueFlipCloseShort = 31,
+    RescueFlipEntryLong = 32,
+    RescueFlipEntryShort = 33,
+
     Empty = 65535,
 }
 
@@ -603,6 +621,10 @@ impl OrderType {
                 | CloseAutoReduceTwelLong
                 | CloseAutoReduceWelLong
                 | ClosePanicLong
+                | RescueRecoveryCloseLong
+                | RescueReverseEntryLong
+                | RescueFlipCloseLong
+                | RescueFlipEntryLong
         )
     }
 }

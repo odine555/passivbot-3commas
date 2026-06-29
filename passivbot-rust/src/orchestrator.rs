@@ -436,6 +436,10 @@ mod core {
                 | CloseAutoReduceTwelShort
                 | ClosePanicShort
                 | CloseAutoReduceWelShort
+                | RescueRecoveryCloseLong
+                | RescueRecoveryCloseShort
+                | RescueFlipCloseLong
+                | RescueFlipCloseShort
         )
     }
 
@@ -1695,8 +1699,8 @@ mod core {
             qty: close_qty,
             price: trigger,
             order_type: match pside {
-                PositionSide::Long => OrderType::CloseGridLong,
-                PositionSide::Short => OrderType::CloseGridShort,
+                PositionSide::Long => OrderType::RescueFlipCloseLong,
+                PositionSide::Short => OrderType::RescueFlipCloseShort,
             },
         };
 
@@ -1763,8 +1767,8 @@ mod core {
                 PositionSide::Short => PositionSide::Long,
             };
             let (open_qty, open_order_type) = match new_pside {
-                PositionSide::Long => (qty_new_abs, OrderType::EntryGridNormalLong),
-                PositionSide::Short => (-qty_new_abs, OrderType::EntryGridNormalShort),
+                PositionSide::Long => (qty_new_abs, OrderType::RescueFlipEntryLong),
+                PositionSide::Short => (-qty_new_abs, OrderType::RescueFlipEntryShort),
             };
             out.push(IdealOrder {
                 symbol_idx,

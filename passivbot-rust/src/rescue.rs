@@ -129,8 +129,8 @@ pub fn calc_rescue_recovery_grid(
     for k in 1..=n_rescue_fav {
         let price = rescue_level_price(side, anchor, b, n_rescue_fav, k as i32);
         let (qty, order_type) = match side {
-            RescueSide::Long => (-rung, OrderType::CloseGridLong),
-            RescueSide::Short => (rung, OrderType::CloseGridShort),
+            RescueSide::Long => (-rung, OrderType::RescueRecoveryCloseLong),
+            RescueSide::Short => (rung, OrderType::RescueRecoveryCloseShort),
         };
         out.push(Order {
             qty,
@@ -161,8 +161,8 @@ pub fn calc_rescue_reverse_grid(
     for k in 1..=n_rescue_rev {
         let price = rescue_level_price(side, anchor, b, n_rescue_fav, -(k as i32));
         let (qty, order_type) = match side {
-            RescueSide::Long => (rung, OrderType::EntryGridNormalLong),
-            RescueSide::Short => (-rung, OrderType::EntryGridNormalShort),
+            RescueSide::Long => (rung, OrderType::RescueReverseEntryLong),
+            RescueSide::Short => (-rung, OrderType::RescueReverseEntryShort),
         };
         out.push(Order {
             qty,
@@ -228,8 +228,8 @@ pub fn calc_rescue_grid_orders(
     for j in first_close..=last_close {
         let price = rescue_level_price(side, anchor, b, n_rescue_fav, j);
         let (qty, order_type) = match side {
-            RescueSide::Long => (-rung, OrderType::CloseGridLong),
-            RescueSide::Short => (rung, OrderType::CloseGridShort),
+            RescueSide::Long => (-rung, OrderType::RescueRecoveryCloseLong),
+            RescueSide::Short => (rung, OrderType::RescueRecoveryCloseShort),
         };
         closes.push(Order {
             qty,
@@ -244,8 +244,8 @@ pub fn calc_rescue_grid_orders(
     for j in first_add..=last_add {
         let price = rescue_level_price(side, anchor, b, n_rescue_fav, j);
         let (qty, order_type) = match side {
-            RescueSide::Long => (rung, OrderType::EntryGridNormalLong),
-            RescueSide::Short => (-rung, OrderType::EntryGridNormalShort),
+            RescueSide::Long => (rung, OrderType::RescueReverseEntryLong),
+            RescueSide::Short => (-rung, OrderType::RescueReverseEntryShort),
         };
         adds.push(Order {
             qty,
@@ -377,12 +377,12 @@ pub fn rescue_refill_order(
     let price = rescue_level_price(side, anchor, b, n_rescue_fav, toward);
     let rung = rescue_rung_qty(position_qty_abs, n_rescue_fav);
     let (qty, order_type) = match (kind, side) {
-        // recovery fill -> opposing ADD
-        (FillKind::RecoveryClose, RescueSide::Long) => (rung, OrderType::EntryGridNormalLong),
-        (FillKind::RecoveryClose, RescueSide::Short) => (-rung, OrderType::EntryGridNormalShort),
+        // recovery fill -> opposing ADD (reverse-grid entry)
+        (FillKind::RecoveryClose, RescueSide::Long) => (rung, OrderType::RescueReverseEntryLong),
+        (FillKind::RecoveryClose, RescueSide::Short) => (-rung, OrderType::RescueReverseEntryShort),
         // adverse-add fill -> opposing RECOVERY (close)
-        (FillKind::AdverseAdd, RescueSide::Long) => (-rung, OrderType::CloseGridLong),
-        (FillKind::AdverseAdd, RescueSide::Short) => (rung, OrderType::CloseGridShort),
+        (FillKind::AdverseAdd, RescueSide::Long) => (-rung, OrderType::RescueRecoveryCloseLong),
+        (FillKind::AdverseAdd, RescueSide::Short) => (rung, OrderType::RescueRecoveryCloseShort),
     };
     Some(Order {
         qty,
@@ -425,7 +425,7 @@ mod tests {
         for (o, &p) in rec.iter().zip(expected.iter()) {
             approx(o.price, p, PRICE_TOL);
             approx(o.qty, -1.0, REL_TOL);
-            assert_eq!(o.order_type, OrderType::CloseGridLong);
+            assert_eq!(o.order_type, OrderType::RescueRecoveryCloseLong);
         }
     }
 
@@ -438,7 +438,7 @@ mod tests {
         for (o, &p) in rev.iter().zip(expected.iter()) {
             approx(o.price, p, PRICE_TOL);
             approx(o.qty, 1.0, REL_TOL);
-            assert_eq!(o.order_type, OrderType::EntryGridNormalLong);
+            assert_eq!(o.order_type, OrderType::RescueReverseEntryLong);
         }
         // deepest reverse == flip trigger == 92.00
         approx(
@@ -476,7 +476,7 @@ mod tests {
             approx(o.price, p, PRICE_TOL);
             assert!(o.qty > 0.0, "short close qty should be > 0");
             approx_rel(o.qty, 1.976, REL_TOL);
-            assert_eq!(o.order_type, OrderType::CloseGridShort);
+            assert_eq!(o.order_type, OrderType::RescueRecoveryCloseShort);
         }
     }
 
@@ -491,7 +491,7 @@ mod tests {
             approx(o.price, p, PRICE_TOL);
             assert!(o.qty < 0.0, "short add qty should be < 0");
             approx_rel(o.qty, -1.976, REL_TOL);
-            assert_eq!(o.order_type, OrderType::EntryGridNormalShort);
+            assert_eq!(o.order_type, OrderType::RescueReverseEntryShort);
         }
         approx(
             rescue_flip_trigger_price(RescueSide::Short, 92.0, 0.088, 10, 5),
@@ -557,7 +557,7 @@ mod tests {
         .unwrap();
         approx(o.price, 100.00, PRICE_TOL);
         assert!(o.qty > 0.0);
-        assert_eq!(o.order_type, OrderType::EntryGridNormalLong);
+        assert_eq!(o.order_type, OrderType::RescueReverseEntryLong);
     }
 
     // ---- traditional-grid re-fill is emergent from inventory-keyed regeneration ----
@@ -594,7 +594,7 @@ mod tests {
         let refill = &closes1[0];
         approx(refill.price, 100.00, PRICE_TOL); // sell back at the anchor
         approx(refill.qty, -1.0, REL_TOL); // fixed rung, not 11/10
-        assert_eq!(refill.order_type, OrderType::CloseGridLong);
+        assert_eq!(refill.order_type, OrderType::RescueRecoveryCloseLong);
 
         // Step 3: price returns to the anchor -> that refill sell fills. One full
         // oscillation banks spacing*qty (the realized round trip = exactly one
@@ -666,7 +666,7 @@ mod tests {
         .unwrap();
         approx(o.price, 98.40, PRICE_TOL);
         assert!(o.qty < 0.0);
-        assert_eq!(o.order_type, OrderType::CloseGridLong);
+        assert_eq!(o.order_type, OrderType::RescueRecoveryCloseLong);
         // a fill exactly at the anchor has no level toward it
         assert!(
             rescue_refill_order(RescueSide::Long, 100.0, 0.08, 10, 10.0, 0, FillKind::AdverseAdd)
